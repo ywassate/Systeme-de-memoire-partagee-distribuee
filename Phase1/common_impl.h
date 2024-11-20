@@ -37,8 +37,14 @@ typedef struct dsm_proc_conn dsm_proc_conn_t;
 
 /* definition du type des infos */
 /* d'identification des processus dsm */
+
 struct dsm_proc {   
-  pid_t pid;
-  dsm_proc_conn_t connect_info;
+    pid_t pid;                  // PID du processus local (enfant)
+    dsm_proc_conn_t connect_info; // Informations de connexion (socket et port)
+    char *machine_name;         // Nom de la machine distante
+    int rank;                   // Rang du processus DSM
+    int stdout_fd;              // Descripteur de fichier pour rediriger stdout
+    int stderr_fd;              // Descripteur de fichier pour rediriger stderr
+    int sock_fd;               // Socket de communication avec le processus distant
 };
 typedef struct dsm_proc dsm_proc_t;

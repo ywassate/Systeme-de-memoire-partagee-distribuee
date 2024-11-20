@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
+#include <errno.h>
 
 /* variables globales */
 #define NUM_PROCS (3)       // nombre de processus enfants créés par dsmexec
@@ -21,7 +23,6 @@ dsm_proc_t *proc_array = NULL;
 /* le nombre de processus effectivement crees */
 volatile int num_procs_creat = 0;
 
-
 void usage(void)                                                               // fonction pour signifier l'usage du script dsmexec
 {          
   fprintf(stdout,"Usage : dsmexec machine_file executable arg1 arg2 ...\n");   // écrire nom du script, arguments
@@ -29,71 +30,56 @@ void usage(void)                                                               /
   exit(EXIT_FAILURE);                                                          // s'arrêter
 }
 
-
-void sigchld_handler(int sig) {              // gérer les processus zombies
-    while (waitpid(-1, NULL, WNOHANG) > 0);  // attendre la fin de tous les processus
-}
-
-
-int creer_socket(int type, const char *ip, int port) {                   // fonction pour créer une socket
-      int sock;                                                          // file descriptor de la socket
-      struct sockaddr_in addr;                                           // structure d'adressage
-
-      sock = socket(AF_INET, type, 0);                                   // créer la socket
-      if (sock == -1) {                                                  // si erreur
-         perror("socket");                                               // envoyer message d'erreur
-         exit(EXIT_FAILURE);                                             // s'arrêter
-      }
-
-      memset(&addr, 0, sizeof(addr));                                    // allouer la structure d'adressage 
-      addr.sin_family = AF_INET;                                         // paramétrer la structure 
-      addr.sin_port = htons(port);
-
-      if (ip == NULL) {                                                  // si l'adresse IP n'est pas précisée
-         addr.sin_addr.s_addr = htonl(INADDR_ANY);                       // accepter les connexions de n'importe quelle adresse
-      } else {                                                           // sinon
-         if (inet_pton(AF_INET, ip, &addr.sin_addr) <= 0) {              // convertir l'IP de texte à binaire
-               perror("inet_pton");                                      // si erreur, envoyer message
-               close(sock);                                              // fermer la socket
-               exit(EXIT_FAILURE);                                       // s'arrêter
-         }
-      }
-
-      if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == -1) {    // lier la socket à l'adresse
-         perror("bind");                                                 // si erreur, envoyer message
-         close(sock);                                                    // fermer la socket
-         exit(EXIT_FAILURE);                                             // s'arrêter
-      }
-
-      if (type == SOCK_STREAM) {                                         // si socket TCP
-         if (listen(sock, 5) == -1) {                                    // se mettre en écoute
-               perror("listen");                                         // si erreur, envoyer message
-               close(sock);                                              // fermer la socket
-               exit(EXIT_FAILURE);                                       // s'arrêter
-         }
-      }
-
-      return sock;                                                       // renvoyer file descriptor de la socket
-}
-
-
-int setup_listen_socket(void) {                              // fonction pour paramétrer la socket d'écoute
-    int listen_socket = creer_socket(SOCK_STREAM, NULL, 0);  // créer la socket en mode TCP
-    if (listen_socket < 0) {                                 // si échec
-        perror("creer_socket");                              // envoyer message
-        exit(EXIT_FAILURE);                                  // s'arrêter
+void sigchld_handler(int sig) {                                                // gérer les processus zombies
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("[DEBUG] Processus %d terminé, status %d\n", pid, WEXITSTATUS(status));
     }
-    listen(listen_socket, NUM_PROCS);                        // se mettre en écoute pour le nombre de processus
-    return listen_socket;                                    // renvoyer file descriptor de la socket
 }
 
+int creer_socket(int type, const char *ip, int port) {
+    int sock;                                    // Déclaration du descripteur de socket
+    struct sockaddr_in addr;                     // Structure pour configurer l'adresse
+    int yes = 1;                                // Option pour réutiliser l'adresse
+    
+    sock = socket(AF_INET, type, 0);            // Création socket: famille IPv4, type spécifié, protocole par défaut
+    if (sock == -1) {                           // Vérification échec création socket
+        perror("socket");                       // Affichage erreur
+        exit(EXIT_FAILURE);                     // Arrêt du programme
+    }
+    
+    if (setsockopt(sock, SOL_SOCKET,            // Configuration option socket pour
+                   SO_REUSEADDR, &yes,          // permettre réutilisation immédiate
+                   sizeof(int)) == -1) {         // de l'adresse après fermeture
+        perror("setsockopt");                   // Affichage si erreur
+        exit(EXIT_FAILURE);                     // Arrêt du programme
+    }
 
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////  Partie Modifiée  /////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
+    memset(&addr, 0, sizeof(addr));                      // Initialisation structure adresse à 0
+    addr.sin_family = AF_INET;                           // Configuration famille IPv4
+    addr.sin_port = htons(port);                         // Configuration port (conversion format réseau)
+    addr.sin_addr.s_addr = (ip == NULL) ?                // Si IP null, toutes interfaces,
+                          htonl(INADDR_ANY) :            // sinon IP spécifique
+                          inet_addr(ip);                 // (conversion format réseau)
+    
+    if (bind(sock, (struct sockaddr *)&addr,             // Association socket avec adresse
+             sizeof(addr)) == -1) {                      // locale configurée
+        perror("bind");                                  // Affichage si erreur
+        close(sock);                                     // Fermeture socket
+        exit(EXIT_FAILURE);                              // Arrêt du programme
+    }
+    
+    if (type == SOCK_STREAM) {                           // Si socket TCP (mode connecté)
+        if (listen(sock, 10) == -1) {                    // Mise en écoute avec queue 10 connexions
+            perror("listen");                            // Affichage si erreur
+            close(sock);                                 // Fermeture socket
+            exit(EXIT_FAILURE);                          // Arrêt du programme
+        }
+    }
+    
+    return sock;                                         // Retourne descripteur socket configuré
+}
 
 char **read_machine_file(char *argv) {                   // fonction pour lire les lignes de machine_file              
 
@@ -154,215 +140,265 @@ char **read_machine_file(char *argv) {                   // fonction pour lire l
 }
 
 
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////  Fin de Partie Modifiée  //////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
-/*******************************************************/
-/*********** ATTENTION : BIEN LIRE LA STRUCTURE DU *****/
-/*********** MAIN AFIN DE NE PAS AVOIR A REFAIRE *******/
-/*********** PLUS TARD LE MEME TRAVAIL DEUX FOIS *******/
-/*******************************************************/
-
 int main(int argc, char *argv[])
 {
    if (argc < 3){                                                              // si pas le bon nombre d'arguments
      usage();                                                                  // signifier usage de la fonction
-   } else {                                                                    // si usage correct
+   }
+
    pid_t pid;                                                                  // variable de stockage des pid des processus enfants
    int num_procs = 0;                                                          // nombre de processus à créer
    int i;                                                                      // variable pour les boucle for
 
    /* Mise en place d'un traitant pour recuperer les fils zombies*/      
-   /* XXX.sa_handler = sigchld_handler; */
    signal(SIGCHLD, sigchld_handler);                                           // gérer les processus zombies
 
    /* lecture du fichier de machines */
-   /* 1- on recupere le nombre de processus a lancer */
-   /* 2- on recupere les noms des machines : le nom de */
-   /* la machine est un des elements d'identification */
-
-   char **tab = read_machine_file(argv[1]);                                    // tableau qui contient le nombre de processus puis les noms des machines où exécuter le programme
-   num_procs = atoi(tab[0]);                                                   // récupérer le nombre de processus
-   printf("nombre de processus à créer : %d\n", num_procs);                    // printf de vérification
+   char **machines = read_machine_file(argv[1]);                               // tableau qui contient le nombre de processus puis les noms des machines
+   num_procs = atoi(machines[0]);                                              // récupérer le nombre de processus
+   printf("[DEBUG] Nombre de processus à créer : %d\n", num_procs);            // printf de vérification
 
    proc_array = malloc(num_procs * sizeof(dsm_proc_t));                        // allouer la mémoire pour proc_array
-   if (proc_array == NULL) {                                                   // si échec
-      perror("malloc");                                                        // afficher message
-      exit(EXIT_FAILURE);                                                      // s'arrêter
+   if (!proc_array) {                                                          // si échec
+       perror("malloc proc_array");                                            // afficher message
+       exit(EXIT_FAILURE);                                                     // s'arrêter
    }
+
+   // Initialisation du tableau proc_array
+   for(i = 0; i < num_procs; i++) {
+       proc_array[i].pid = -1;
+       proc_array[i].rank = i;
+       proc_array[i].machine_name = strdup(machines[i + 1]);
+   }
+
    /* creation de la socket d'ecoute */
-   /* + ecoute effective */ 
-   
-   int listen_socket = setup_listen_socket();                                  // paramètrer la socket d'écoute
+   int listen_socket = creer_socket(SOCK_STREAM, NULL, 0);                     // paramètrer la socket d'écoute
    struct sockaddr_in sin;                                                     // structure d'adressage
    socklen_t len = sizeof(sin);                                                // taille de la structure
 
-   if (getsockname(listen_socket, (struct sockaddr *)&sin, &len) == -1) {      // remplir la structure d'adressage avec le contenu de la socket d'écoute
-      perror("getsockname");                                                   // si échec, envoyer message
-      exit(EXIT_FAILURE);                                                      // s'arrêter
+   if (getsockname(listen_socket, (struct sockaddr *)&sin, &len) == -1) {      // remplir la structure d'adressage
+       perror("getsockname");                                                  // si échec, envoyer message
+       exit(EXIT_FAILURE);                                                     // s'arrêter
    }
    
-   int listen_port = ntohs(sin.sin_port);                                      // convertir le port d'écoute au bon format
-   printf("Port d'écoute : %d\n", listen_port);                                // printf de vérification
+   int listen_port = ntohs(sin.sin_port);                                     // convertir le port d'écoute
+   printf("[DEBUG] Socket d'écoute créée sur le port : %d\n", listen_port);   // printf de vérification
 
-   for(i = 0; i < num_procs ; i++) {                                           // pour le nombre de processus
-
-      int stdout_pipe[2], stderr_pipe[2];                                      // initialiser les files descriptors des pipes de sortie et d'erreur
-      if (pipe(stdout_pipe) == -1 || pipe(stderr_pipe) == -1) {                // si échec de création d'au moins un
-            perror("pipe");                                                    // envoyer message d'erreur
-            exit(EXIT_FAILURE);                                                // s'arrêter
+   for(i = 0; i < num_procs ; i++) {                                          // pour le nombre de processus
+      int stdout_pipe[2], stderr_pipe[2];                                     // initialiser les pipes
+      
+      if (pipe(stdout_pipe) == -1 || pipe(stderr_pipe) == -1) {               // si échec de création
+          perror("pipe");                                                     // envoyer message
+          exit(EXIT_FAILURE);                                                 // s'arrêter
       }
 
-      pid = fork();                                                            // créer un processus enfant
-      if (pid == -1) {                                                         // si erreur
-            perror("fork");                                                    // envoyer message
-            exit(EXIT_FAILURE);                                                // s'arrêter
+      pid = fork();                                                           // créer processus enfant
+      if (pid == -1) {                                                        // si échec
+          perror("fork");                                                     // envoyer message
+          exit(EXIT_FAILURE);                                                 // s'arrêter
       }
       
-      if (pid == 0) {                                                          // si dans le processus enfant
+      if (pid == 0) {                                                         // si processus enfant
+           close(stdout_pipe[0]);                                             // fermer lecture stdout
+           close(stderr_pipe[0]);                                             // fermer lecture stderr
 
-            close(stdout_pipe[0]);                                             // fermer la lecture de la sortie standard
-            if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1) {                   // dupliquer la sortie en écriture sur la sortie standard
-               perror("dup2 stdout");                                          // si échec, envoyer message
-               exit(EXIT_FAILURE);                                             // s'arrêter
-            }
+           if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1) {                   // dupliquer stdout
+               perror("dup2 stdout");                                         // si échec
+               exit(EXIT_FAILURE);                                            // s'arrêter
+           }
+           if (dup2(stderr_pipe[1], STDERR_FILENO) == -1) {                   // dupliquer stderr
+               perror("dup2 stderr");                                         // si échec
+               exit(EXIT_FAILURE);                                            // s'arrêter
+           }
 
-            close(stderr_pipe[0]);                                             // fermer la lecture de l'erreur standard
-            if (dup2(stderr_pipe[1], STDERR_FILENO) == -1) {                   // dupliquer la sortie en écriture sur l'erreur standard
-               perror("dup2 stderr");                                          // si échec, envoyer message
-               exit(EXIT_FAILURE);                                             // s'arrêter
-            }
+           char *dsm_bin = getenv("DSM_BIN");                                 // récupérer DSM_BIN
+           if (!dsm_bin) {                                                    // si non défini
+               fprintf(stderr, "[ERROR] DSM_BIN non défini\n");               // message d'erreur
+               exit(EXIT_FAILURE);                                            // s'arrêter
+           }
 
-            char port_str[10];                                                 // buffer pour le port d'écoute
-            sprintf(port_str, "%d", listen_port);                              // copier dans le buffer le port d'écoute
+           char port_str[10];                                                 // chaîne pour le port
+           sprintf(port_str, "%d", listen_port);                              // convertir port en chaîne
 
-            char *executable = argv[2];                                        // pointeur sur la fonction à exécuter
-            char *newargv[] = {                                                // paramétrer tableau d'arguments
-               "ssh",                                                          // connexion ssh
-               tab[i + 1],                                                     // nom de la machine sur laquelle se connecter
-               "dsmwrap",                                                      // utiliser le programme dsmwrap
-               executable,                                                     // utiliser la fonction à exécuter
-               port_str,                                                       // port d'écoute
-               NULL                                                            // fin de tableau d'argument
-            };
+           char rank_str[10];                                                 // chaîne pour le rang
+           sprintf(rank_str, "%d", i);                                        // convertir rang en chaîne
 
-            execvp("ssh", newargv);                                            // se connecter à la machine par ssh avec les arguments
-            perror("execvp");                                                  // si échec, envoyer erreur
-            exit(EXIT_FAILURE);                                                // s'arrêter
+           char remote_cmd[4096];                                             // commande à distance
+           snprintf(remote_cmd, sizeof(remote_cmd),                           // préparer la commande
+                   "export DSM_BIN=%s; "
+                   "export PATH=$DSM_BIN:$PATH; "
+                   "%s/dsmwrap %s %s %s",
+                   dsm_bin,
+                   dsm_bin, port_str, rank_str, argv[2]);  
 
-      } else if (pid > 0) {                                                    // si dans le processus parent
-            printf("PID du processus: %i\n", pid);                             // afficher PID du processus créé
-            num_procs_creat++;                                                 // incrémenter nombre de processus créés
+           printf("[DEBUG] Commande à exécuter : %s\n", remote_cmd);          // afficher commande
+
+           char *ssh_args[] = {                                               // arguments ssh
+               "ssh",
+               machines[i + 1],
+               "bash", "-c",
+               remote_cmd,
+               NULL
+           };
+
+           execvp("ssh", ssh_args);                                           // exécuter ssh
+           perror("execvp");                                                  // si échec
+           exit(EXIT_FAILURE);                                                // s'arrêter
       }
+
+      // Parent
+      proc_array[i].pid = pid;                                                // stocker pid
+      proc_array[i].stdout_fd = stdout_pipe[0];                               // stocker fd stdout
+      proc_array[i].stderr_fd = stderr_pipe[0];                               // stocker fd stderr
+      close(stdout_pipe[1]);                                                  // fermer écriture stdout
+      close(stderr_pipe[1]);                                                  // fermer écriture stderr
+      
+      printf("[DEBUG] Processus %d créé avec pid %d\n", i, pid);             // message de confirmation
    }
 
-   fd_set readfds;                                                             // tableau pour les descripteurs de fichiers
-   FD_ZERO(&readfds);                                                          // nettoyer le tableau pour tout mettre à zero 
-   int max_fd = 0;                                                             // compteur de descripteurs de fichier
+   printf("\n[DEBUG] === Attente des connexions ===\n");                      // message d'attente
 
-   for (i = 0; i < num_procs; i++) {                                           // pour l'ensemble des processus
-      FD_SET(proc_array[i].stdout_fd, &readfds);                               // assigner la sortie standard dans le tableau
-      FD_SET(proc_array[i].stderr_fd, &readfds);                               // assigner l'erreur standard dans le tableau
-      if (proc_array[i].stdout_fd > max_fd) max_fd = proc_array[i].stdout_fd;  // si le descripteur de fichier est plus grand que le maximum, mettre à jour le maximum
-      if (proc_array[i].stderr_fd > max_fd) max_fd = proc_array[i].stderr_fd;  // voir ligne précédente
-   }
-
-   if (select(max_fd + 1, &readfds, NULL, NULL, NULL) > 0) {                   // voir quel descripteur de fichier est utilisé pour transmettre une information
-    printf("Data available on pipes.\n");                                      // message de confirmation
-    for (i = 0; i < num_procs; i++) {                                          // pour l'ensemble des processus
-        if (FD_ISSET(proc_array[i].stdout_fd, &readfds)) {                     // si la sortie standard a des informations à transmettre
-            char buffer[1024];                                                 // préparer un buffer de lecture
-            int n = read(proc_array[i].stdout_fd, buffer, sizeof(buffer) - 1); // lire dans la socket
-            if (n > 0) {                                                       // si chaîne effectivement lue
-                buffer[n] = '\0';                                              // terminer la chaîne
-                printf("[Proc %d : localhost : stdout] %s\n", i, buffer);      // afficher processus écrivain : sortie standard : message
-            }
-        }
-        if (FD_ISSET(proc_array[i].stderr_fd, &readfds)) {                     // si l'erreur standard a des informations à transmettre
-            char buffer[1024];                                                 // préparer un buffer de lecture
-            int n = read(proc_array[i].stderr_fd, buffer, sizeof(buffer) - 1); // lire dans la socket
-            if (n > 0) {                                                       // si chaîne effectivement lue
-                buffer[n] = '\0';                                              // terminer la chaîne
-                printf("[Proc %d : localhost : stderr] %s\n", i, buffer);      // afficher processus écrivain : erreur standard : message
-            }
-         }
-      } 
-   }
-
-   for (i = 0; i < num_procs; i++) {                                           // pour le nombre de processus créés
-       waitpid(proc_array[i].pid, NULL, 0);                                    // attendre la terminaison
-   }
-
-
-   // Libération de la mémoire pour le tableau des machines
-   for (int i = 0; i <= num_procs; i++) {                                      // pour le nombre de processus créés
-      free(tab[i]);                                                            // libérer leur case du tableau
-   }
-   free(tab);                                                                  // libérer le tableau
-
-   
-   for(i = 0; i < num_procs ; i++){                                            // pour le nombre de processus à créer
-	
-	/* on accepte les connexions des processus dsm */
-	
-	/*  On recupere le nom de la machine distante */
-	/* les chaines ont une taille de MAX_STR */
-
-	/* On recupere le pid du processus distant  (optionnel)*/
-	
-	/* On recupere le numero de port de la socket */
-	/* d'ecoute des processus distants */
-        /* cf code de dsmwrap.c */  
-   }
-
-     /***********************************************************/ 
-     /********** ATTENTION : LE PROTOCOLE D'ECHANGE *************/
-     /********** DECRIT CI-DESSOUS NE DOIT PAS ETRE *************/
-     /********** MODIFIE, NI DEPLACE DANS LE CODE   *************/
-     /***********************************************************/
-     
-     /* 1- envoi du nombre de processus aux processus dsm*/
-     /* On envoie cette information sous la forme d'un ENTIER */
-     /* (IE PAS UNE CHAINE DE CARACTERES */
-     
-     /* 2- envoi des rangs aux processus dsm */
-     /* chaque processus distant ne reçoit QUE SON numéro de rang */
-     /* On envoie cette information sous la forme d'un ENTIER */
-     /* (IE PAS UNE CHAINE DE CARACTERES */
-     
-     /* 3- envoi des infos de connexion aux processus */
-     /* Chaque processus distant doit recevoir un nombre de */
-     /* structures de type dsm_proc_conn_t égal au nombre TOTAL de */
-     /* processus distants, ce qui signifie qu'un processus */
-     /* distant recevra ses propres infos de connexion */
-     /* (qu'il n'utilisera pas, nous sommes bien d'accords). */
-
-     /***********************************************************/
-     /********** FIN DU PROTOCOLE D'ECHANGE DES DONNEES *********/
-     /********** ENTRE DSMEXEC ET LES PROCESSUS DISTANTS ********/
-     /***********************************************************/
-     
-     /* gestion des E/S : on recupere les caracteres */
-     /* sur les tubes de redirection de stdout/stderr */     
-     /* while(1)
-         {
-            je recupere les infos sur les tubes de redirection
-            jusqu'à ce qu'ils soient inactifs (ie fermes par les
-            processus dsm ecrivains de l'autre cote ...)
+   // Acceptation des connexions des processus distants
+   for(i = 0; i < num_procs ; i++) {
+       struct sockaddr_in client_addr;                                         // structure client
+       socklen_t client_len = sizeof(client_addr);                            // taille structure
        
-         };
-      */
+       printf("[DEBUG] Attente connexion processus %d...\n", i);              // message d'attente
+       
+       int client_sock = accept(listen_socket,                                // accepter connexion
+                              (struct sockaddr *)&client_addr, 
+                              &client_len);
+       if (client_sock < 0) {                                                 // si erreur
+           if (errno == EINTR) {                                              // si interruption
+               printf("[DEBUG] Accept interrompu, nouvelle tentative\n");      // message
+               i--;                                                           // réessayer
+               continue;                                                      // continuer boucle
+           }
+           perror("accept");                                                  // si autre erreur
+           exit(EXIT_FAILURE);                                                // s'arrêter
+       }
 
-     /* on attend les processus fils */
-     
-     /* on ferme les descripteurs proprement */
-     
-     /* on ferme la socket d'ecoute */
-  }   
-   exit(EXIT_SUCCESS);  
+       printf("[DEBUG] Connexion acceptée pour processus %d\n", i);           // message de succès
+
+       // Réception des informations
+       dsm_proc_conn_t conn_info;                                             // structure connexion
+       if (recv(client_sock, &conn_info, sizeof(dsm_proc_conn_t), 0) < 0) {  // recevoir infos
+           perror("recv");                                                    // si erreur
+           exit(EXIT_FAILURE);                                                // s'arrêter
+       }
+
+       printf("[DEBUG] Infos reçues du processus %d (rank=%d)\n",            // message de réception
+              i, conn_info.rank);
+
+       // Envoi du nombre de processus
+       if (send(client_sock, &num_procs, sizeof(int), 0) < 0) {              // envoyer nombre processus
+           perror("send num_procs");                                          // si erreur
+           exit(EXIT_FAILURE);                                                // s'arrêter
+       }
+
+       // Envoi du rang
+       if (send(client_sock, &i, sizeof(int), 0) < 0) {                      // envoyer rang
+           perror("send rank");                                               // si erreur
+           exit(EXIT_FAILURE);                                                // s'arrêter
+       }
+
+       // Envoi des infos de connexion de tous les processus
+       for (int j = 0; j < num_procs; j++) {                                 // pour chaque processus
+           if (send(client_sock, &proc_array[j].connect_info,                // envoyer infos connexion
+                   sizeof(dsm_proc_conn_t), 0) < 0) {
+               perror("send conn_info");                                      // si erreur
+               exit(EXIT_FAILURE);                                            // s'arrêter
+           }
+       }
+
+       proc_array[conn_info.rank].connect_info = conn_info;                   // stocker infos
+       close(client_sock);                                                    // fermer socket
+       
+       printf("[DEBUG] Configuration terminée pour processus %d\n", i);       // message de fin
+   }
+
+   printf("[DEBUG] === Fin des initialisations, début surveillance E/S ===\n"); // message début E/S
+
+   // Boucle de surveillance des E/S
+   fd_set readfds;                                                            // ensemble descripteurs
+   int max_fd = 0;                                                            // fd maximum
+   int active_fds = num_procs * 2;                                           // nombre fd actifs
+
+   while (active_fds > 0) {                                                   // tant qu'il y a des fd actifs
+       FD_ZERO(&readfds);                                                     // vider ensemble
+       max_fd = 0;                                                            // réinitialiser max
+
+       for (i = 0; i < num_procs; i++) {                                      // pour chaque processus
+           if (proc_array[i].stdout_fd >= 0) {                                // si stdout actif
+               FD_SET(proc_array[i].stdout_fd, &readfds);                     // ajouter à l'ensemble
+               max_fd = (proc_array[i].stdout_fd > max_fd) ? 
+                        proc_array[i].stdout_fd : max_fd;                     // mettre à jour max
+           }
+           if (proc_array[i].stderr_fd >= 0) {                                // si stderr actif
+               FD_SET(proc_array[i].stderr_fd, &readfds);                     // ajouter à l'ensemble
+               max_fd = (proc_array[i].stderr_fd > max_fd) ? 
+                        proc_array[i].stderr_fd : max_fd;                     // mettre à jour max
+           }
+       }
+
+       if (max_fd == 0) break;                                               // si plus de fd, sortir
+
+       int ret = select(max_fd + 1, &readfds, NULL, NULL, NULL);             // attendre données
+       if (ret < 0) {                                                        // si erreur
+           if (errno == EINTR) continue;                                     // si interruption, continuer
+           perror("select");                                                 // si autre erreur
+           break;                                                            // sortir
+       }
+
+       for (i = 0; i < num_procs; i++) {                                     // pour chaque processus
+           char buffer[1024];                                                // buffer lecture
+           int n;                                                            // nombre octets lus
+
+           if (proc_array[i].stdout_fd >= 0 &&                               // si stdout actif
+               FD_ISSET(proc_array[i].stdout_fd, &readfds)) {                // et données disponibles
+               n = read(proc_array[i].stdout_fd, buffer, sizeof(buffer) - 1); // lire données
+               if (n > 0) {                                                  // si données lues
+                   buffer[n] = '\0';                                         // terminer chaîne
+                   printf("[Proc %d : %s : stdout] %s",                      // afficher données
+                          i, proc_array[i].machine_name, buffer);
+               } else if (n == 0) {                                          // si fin fichier
+                   close(proc_array[i].stdout_fd);                           // fermer fd
+                   proc_array[i].stdout_fd = -1;                             // marquer inactif
+                   active_fds--;                                             // décrémenter actifs
+               }
+           }
+
+           if (proc_array[i].stderr_fd >= 0 &&                               // si stderr actif
+               FD_ISSET(proc_array[i].stderr_fd, &readfds)) {                // et données disponibles
+               n = read(proc_array[i].stderr_fd, buffer, sizeof(buffer) - 1); // lire données
+               if (n > 0) {                                                  // si données lues
+                   buffer[n] = '\0';                                         // terminer chaîne
+                   printf("[Proc %d : %s : stderr] %s",                      // afficher données
+                          i, proc_array[i].machine_name, buffer);
+               } else if (n == 0) {                                          // si fin fichier
+                   close(proc_array[i].stderr_fd);                           // fermer fd
+                   proc_array[i].stderr_fd = -1;                             // marquer inactif
+                   active_fds--;                                             // décrémenter actifs
+               }
+           }
+       }
+   }
+
+   printf("[DEBUG] === Nettoyage final ===\n");                              // message nettoyage
+
+   // Nettoyage
+   close(listen_socket);                                                      // fermer socket écoute
+   for (i = 0; i < num_procs; i++) {                                         // pour chaque processus
+       if (proc_array[i].stdout_fd >= 0) close(proc_array[i].stdout_fd);     // fermer stdout si actif
+       if (proc_array[i].stderr_fd >= 0) close(proc_array[i].stderr_fd);     // fermer stderr si actif
+       free(proc_array[i].machine_name);                                     // libérer nom machine
+   }
+
+   for (i = 0; i <= num_procs; i++) {                                        // pour chaque machine
+       free(machines[i]);                                                    // libérer nom
+   }
+   free(machines);                                                           // libérer tableau machines
+   free(proc_array);                                                         // libérer tableau processus
+
+   return EXIT_SUCCESS;                                                       // terminer normalement
 }
-
