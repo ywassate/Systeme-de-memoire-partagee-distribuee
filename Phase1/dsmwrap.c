@@ -1,9 +1,9 @@
 #include "common_impl.h"
 
-#include <sys/types.h>       // Définitions de types de base
-#include <sys/socket.h>      // Définitions pour les sockets (inclut SOCK_STREAM)
-#include <netinet/in.h>      // Définitions pour les adresses Internet (inclut sockaddr_in)
-#include <arpa/inet.h>       // Fonctions pour les conversions d'adresses (ex., htons, ntohs)
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,110 +11,116 @@
 #include <signal.h>
 #include <errno.h>
 
-/* variables globales */
-#define PAGE_SIZE (4096)    // taille d'une page mémoire
-#define MAX_NAME_SIZE (20)  // taille maximum du nom d'une machine repertoriée dans machine_file
+#define PAGE_SIZE (4096)
+#define MAX_NAME_SIZE (20)
 
 int main(int argc, char *argv[])
 {   
-   /* processus intermediaire pour "nettoyer" */
-   /* la liste des arguments qu'on va passer */
-   /* a la commande a executer finalement  */
-   
-   /* creation d'une socket pour se connecter au */
-   /* au lanceur et envoyer/recevoir les infos */
-   /* necessaires pour la phase dsm_init */   
-
-   /*
-
-   int sock;                                    // Déclaration du descripteur de socket
-   struct sockaddr_in addr;                     // Structure pour configurer l'adresse
-   int yes = 1;                                 // Option pour réutiliser l'adresse
-   int *ip = NULL;
-    
-   sock = socket(AF_INET, SOCK_STREAM, 0);      // Création socket: famille IPv4, type spécifié, protocole par défaut
-   if (sock == -1) {                            // Vérification échec création socket
-      perror("socket");                         // Affichage erreur
-      exit(EXIT_FAILURE);                       // Arrêt du programme
-   }
-    
-   if (setsockopt(sock, SOL_SOCKET,            // Configuration option socket pour
-                  SO_REUSEADDR, &yes,          // permettre réutilisation immédiate
-                  sizeof(int)) == -1) {        // de l'adresse après fermeture
-      perror("setsockopt");                    // Affichage si erreur
-      exit(EXIT_FAILURE);                      // Arrêt du programme
+    if (argc < 5) {
+        fprintf(stderr, "Usage: %s ip_dsmexec port_dsmexec rang programme [args...]\n", argv[0]);
+        exit(EXIT_FAILURE);
     }
 
-   memset(&addr, 0, sizeof(addr));                      // Initialisation structure adresse à 0
-   addr.sin_family = AF_INET;                           // Configuration famille IPv4
-   addr.sin_port = htons(atoi(argv[2]));                // Configuration port (conversion format réseau)
-   addr.sin_addr.s_addr = (ip == NULL) ?                // Si IP null, toutes interfaces,
-                        htonl(INADDR_ANY) :            // sinon IP spécifique
-                        inet_addr(ip);                 // (conversion format réseau)
-   if (connect(sock, addr) == -1) {
-      perror("connect to dsmexec");
-      exit(EXIT_FAILURE);
-   } 
+    // Récupération des arguments
+    char *ip_dsmexec = argv[1];
+    int port_dsmexec = atoi(argv[2]);
+    int rang = atoi(argv[3]);
+    char *programme = argv[4];
 
-   */
+    printf("[dsmwrap] Démarrage - IP:%s, Port:%d, Rang:%d, Programme:%s\n", 
+           ip_dsmexec, port_dsmexec, rang, programme);
 
-   /* Envoi du nom de machine au lanceur */
-   /* Envoi du pid au lanceur (optionnel) */
+    // Création socket de connexion vers dsmexec
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == -1) {
+        perror("[dsmwrap] socket");
+        exit(EXIT_FAILURE);
+    }
 
-   /*
+    // Configuration de l'adresse de connexion
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port_dsmexec);
+    if (inet_pton(AF_INET, ip_dsmexec, &addr.sin_addr) != 1) {
+        perror("[dsmwrap] inet_pton");
+        exit(EXIT_FAILURE);
+    }
 
-   char hostname[MAX_STR];
-   gethostname(hostname, MAX_STR);
-   if (send(sock, hostname, strlen(hostname) + 1, 0) == -1) {
-      perror("send hostname");
-      exit(EXIT_FAILURE);
-   }
+    // Connexion à dsmexec
+    printf("[dsmwrap] Tentative de connexion à %s:%d\n", ip_dsmexec, port_dsmexec);
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        perror("[dsmwrap] connect");
+        exit(EXIT_FAILURE);
+    }
+    printf("[dsmwrap] Connecté à dsmexec\n");
 
-   pid_t pid = getpid();
-   if (send(sock, &pid, sizeof(pid), 0) == -1) {
-      perror("send pid");
-      exit(EXIT_FAILURE);
-   }
+    // Envoi des informations au lanceur
+    char hostname[MAX_NAME_SIZE];
+    if (gethostname(hostname, MAX_NAME_SIZE) == -1) {
+        perror("[dsmwrap] gethostname");
+        exit(EXIT_FAILURE);
+    }
 
-   */
+    // Création de la socket d'écoute pour les autres processus DSM
+    int listen_sock = creer_socket(SOCK_STREAM, NULL, 0);
+    if (listen_sock == -1) {
+        perror("[dsmwrap] creer_socket");
+        exit(EXIT_FAILURE);
+    }
 
-   /* Creation de la socket d'ecoute pour les */
-   /* connexions avec les autres processus dsm */
+    // Récupération du port d'écoute
+    struct sockaddr_in sin;
+    socklen_t len = sizeof(sin);
+    if (getsockname(listen_sock, (struct sockaddr *)&sin, &len) == -1) {
+        perror("[dsmwrap] getsockname");
+        exit(EXIT_FAILURE);
+    }
+    int listen_port = ntohs(sin.sin_port);
 
-   /*
+    // Préparation des informations de connexion
+    dsm_proc_conn_t conn_info;
+    conn_info.rank = rang;
+    strncpy(conn_info.machine, hostname, MAX_NAME_SIZE);
+    conn_info.port_num = listen_port;
 
-   int listen_sock = setup_listen_socket();
-   struct sockaddr_in sin;
-   socklen_t len = sizeof(sin);
-   getsockname(listen_sock, (struct sockaddr *)&sin, &len);
-   int listen_port = ntohs(sin.sin_port);
+    // Envoi des informations de connexion
+    printf("[dsmwrap] Envoi des informations de connexion (rang=%d, machine=%s, port=%d)\n",
+           conn_info.rank, conn_info.machine, conn_info.port_num);
+    if (send(sock, &conn_info, sizeof(dsm_proc_conn_t), 0) == -1) {
+        perror("[dsmwrap] send conn_info");
+        exit(EXIT_FAILURE);
+    }
 
-   */
+    // Réception du nombre total de processus
+    int num_procs;
+    if (recv(sock, &num_procs, sizeof(int), 0) == -1) {
+        perror("[dsmwrap] recv num_procs");
+        exit(EXIT_FAILURE);
+    }
 
-   /* Envoi du numero de port au lanceur */
-   /* pour qu'il le propage à tous les autres */
-   /* processus dsm */
- 
-   /*
-   
-   if (send(sock, &listen_port, sizeof(listen_port), 0) == -1) {
-      perror("send listen_port");
-      exit(EXIT_FAILURE);
-   }
+    // Réception des informations de connexion des autres processus
+    dsm_proc_conn_t *procs_conn = malloc(num_procs * sizeof(dsm_proc_conn_t));
+    for (int i = 0; i < num_procs; i++) {
+        if (recv(sock, &procs_conn[i], sizeof(dsm_proc_conn_t), 0) == -1) {
+            perror("[dsmwrap] recv proc_conn");
+            exit(EXIT_FAILURE);
+        }
+    }
 
-   */
-   
-   
-   /* on execute la bonne commande */
-   /* attention au chemin à utiliser ! */
+    // Fermeture de la socket de communication avec dsmexec
+    close(sock);
 
-   /************** ATTENTION **************/
-   /* vous remarquerez que ce n'est pas   */
-   /* ce processus qui récupère son rang, */
-   /* ni le nombre de processus           */
-   /* ni les informations de connexion    */
-   /* (cf protocole dans dsmexec)         */
-   /***************************************/
-  
-   return 0;
+    // Préparation des arguments pour le programme
+    char **new_argv = malloc((argc - 3) * sizeof(char*));
+    for (int i = 4; i < argc; i++) {
+        new_argv[i-4] = argv[i];
+    }
+    new_argv[argc-4] = NULL;
+
+    // Exécution du programme
+    printf("[dsmwrap] Lancement du programme %s\n", programme);
+    execvp(programme, new_argv);
+    perror("[dsmwrap] execvp");
+    exit(EXIT_FAILURE);
 }

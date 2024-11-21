@@ -1,9 +1,9 @@
 #include "common_impl.h"
 
-#include <sys/types.h>       // Définitions de types de base
-#include <sys/socket.h>      // Définitions pour les sockets (inclut SOCK_STREAM)
-#include <netinet/in.h>      // Définitions pour les adresses Internet (inclut sockaddr_in)
-#include <arpa/inet.h>       // Fonctions pour les conversions d'adresses (ex., htons, ntohs)
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,139 +12,164 @@
 #include <errno.h>
 
 /* variables globales */
-#define PAGE_SIZE (4096)    // taille d'une page mémoire
-#define MAX_NAME_SIZE (20)  // taille maximum du nom d'une machine repertoriée dans machine_file
+#define PAGE_SIZE (4096)
+#define MAX_NAME_SIZE (20)
 
-/* un tableau gerant les infos d'identification */
-/* des processus dsm */
 dsm_proc_t *proc_array = NULL; 
-
-/* le nombre de processus effectivement crees */
 volatile int num_procs_creat = 0;
 
-void usage(void)                                                               // fonction pour signifier l'usage du script dsmexec
+void usage(void)
 {          
-  fprintf(stdout,"Usage : dsmexec machine_file executable arg1 arg2 ...\n");   // écrire nom du script, arguments
-  fflush(stdout);                                                              // vider le buffer
-  exit(EXIT_FAILURE);                                                          // s'arrêter
+  fprintf(stdout,"Usage : dsmexec machine_file executable arg1 arg2 ...\n");
+  fflush(stdout);
+  exit(EXIT_FAILURE);
 }
-
 
 int main(int argc, char *argv[])
 {
-   if (argc < 3){                                                              // si pas le bon nombre d'arguments
-     usage();                                                                  // signifier usage de la fonction
+   if (argc < 3){
+     usage();
    }
 
-   pid_t pid;                                                                  // variable de stockage des pid des processus enfants
-   int num_procs = 0;                                                          // nombre de processus à créer
-   int i;                                                                      // variable pour les boucle for
+   pid_t pid;
+   int num_procs = 0;
+   int i;
 
-   /* Mise en place d'un traitant pour recuperer les fils zombies*/      
-   signal(SIGCHLD, sigchld_handler);                                           // gérer les processus zombies
+   signal(SIGCHLD, sigchld_handler);
 
-   /* lecture du fichier de machines */
-   char **machines = read_machine_file(argv[1]);                               // tableau qui contient le nombre de processus puis les noms des machines
-   num_procs = atoi(machines[0]);                                              // récupérer le nombre de processus
-   printf("[DEBUG] Nombre de processus à créer : %d\n", num_procs);            // printf de vérification
+   char **machines = read_machine_file(argv[1]);
+   num_procs = atoi(machines[0]);
+   printf("[DEBUG] Nombre de processus à créer : %d\n", num_procs);
 
-   proc_array = malloc(num_procs * sizeof(dsm_proc_t));                        // allouer la mémoire pour proc_array
-   if (!proc_array) {                                                          // si échec
-       perror("malloc proc_array");                                            // afficher message
-       exit(EXIT_FAILURE);                                                     // s'arrêter
+   proc_array = malloc(num_procs * sizeof(dsm_proc_t));
+   if (!proc_array) {
+       perror("malloc proc_array");
+       exit(EXIT_FAILURE);
    }
 
-   // Initialisation du tableau proc_array
    for(i = 0; i < num_procs; i++) {
        proc_array[i].pid = -1;
        proc_array[i].rank = i;
        proc_array[i].machine_name = strdup(machines[i + 1]);
    }
 
-   /* creation de la socket d'ecoute */
-   int listen_socket = creer_socket(SOCK_STREAM, NULL, 0);                     // paramètrer la socket d'écoute
-   struct sockaddr_in sin;                                                     // structure d'adressage
-   socklen_t len = sizeof(sin);                                                // taille de la structure
+   int listen_socket = creer_socket(SOCK_STREAM, NULL, 0);
+   struct sockaddr_in sin;
+   socklen_t len = sizeof(sin);
 
-   if (getsockname(listen_socket, (struct sockaddr *)&sin, &len) == -1) {      // remplir la structure d'adressage
-       perror("getsockname");                                                  // si échec, envoyer message
-       exit(EXIT_FAILURE);                                                     // s'arrêter
+   if (getsockname(listen_socket, (struct sockaddr *)&sin, &len) == -1) {
+       perror("getsockname");
+       exit(EXIT_FAILURE);
    }
    
-   int listen_port = ntohs(sin.sin_port);                                      // convertir le port d'écoute
-   printf("[DEBUG] Socket d'écoute créée sur le port : %d\n", listen_port);    // printf de vérification
+   // Récupérer le port et l'IP
+int listen_port = ntohs(sin.sin_port);
+char listen_ip[INET_ADDRSTRLEN];
+inet_ntop(AF_INET, &(sin.sin_addr), listen_ip, INET_ADDRSTRLEN);
 
-   for(i = 0; i < num_procs ; i++) {                                           // pour le nombre de processus
-      int stdout_pipe[2], stderr_pipe[2];                                      // initialiser les pipes
+printf("[DEBUG] Socket d'écoute créée sur %s:%d\n", listen_ip, listen_port);
+
+   for(i = 0; i < num_procs ; i++) {
+      int stdout_pipe[2], stderr_pipe[2];
       
-      if (pipe(stdout_pipe) == -1 || pipe(stderr_pipe) == -1) {                // si échec de création
-          perror("pipe");                                                      // envoyer message
-          exit(EXIT_FAILURE);                                                  // s'arrêter
+      printf("[DEBUG] Création des pipes pour processus %d\n", i);
+      if (pipe(stdout_pipe) == -1 || pipe(stderr_pipe) == -1) {
+          perror("pipe");
+          exit(EXIT_FAILURE);
+      }
+      printf("[DEBUG] Pipes créés - stdout[%d, %d], stderr[%d, %d]\n", 
+             stdout_pipe[0], stdout_pipe[1], stderr_pipe[0], stderr_pipe[1]);
+
+      pid = fork();
+      if (pid == -1) {
+          perror("fork");
+          exit(EXIT_FAILURE);
+      }
+      
+      if (pid == 0) {
+           printf("[DEBUG][Enfant %d] Fermeture des extrémités de lecture des pipes\n", i);
+           close(stdout_pipe[0]);
+           close(stderr_pipe[0]);
+           printf("[DEBUG][Enfant %d] Descripteurs avant dup2: stdout=%d, stderr=%d\n", 
+                  i, fileno(stdout), fileno(stderr));
+
+           printf("[DEBUG][Enfant %d] Duplication stdout_pipe[1](%d) vers STDOUT_FILENO(%d)\n", 
+                  i, stdout_pipe[1], STDOUT_FILENO);
+           if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1) {
+               perror("dup2 stdout");
+               exit(EXIT_FAILURE);
+           }
+
+           printf("[DEBUG][Enfant %d] Duplication stderr_pipe[1](%d) vers STDERR_FILENO(%d)\n", 
+                  i, stderr_pipe[1], STDERR_FILENO);
+           if (dup2(stderr_pipe[1], STDERR_FILENO) == -1) {
+               perror("dup2 stderr");
+               exit(EXIT_FAILURE);
+           }
+
+           printf("[DEBUG][Enfant %d] Descripteurs après dup2: stdout=%d, stderr=%d\n", 
+                  i, fileno(stdout), fileno(stderr));
+
+           char *dsm_bin = getenv("DSM_BIN");
+           if (!dsm_bin) {
+               fprintf(stderr, "[ERROR] DSM_BIN non défini\n");
+               exit(EXIT_FAILURE);
+           }
+           printf("[DEBUG][Enfant %d] DSM_BIN = %s\n", i, dsm_bin);
+
+           char port_str[10];
+           sprintf(port_str, "%d", listen_port);
+
+           char rank_str[10];
+           sprintf(rank_str, "%d", i);
+
+           // Dans la partie où vous créez la commande SSH dans dsmexec.c
+char remote_cmd[4096];
+snprintf(remote_cmd, sizeof(remote_cmd),
+         "export DSM_BIN=%s; "
+         "export PATH=$DSM_BIN:$PATH; "
+         "%s/dsmwrap %s %d %d %s",
+         dsm_bin,
+         dsm_bin, 
+         "0.0.0.0",  // On utilise 0.0.0.0 pour le moment
+         listen_port,
+         i,          // rang
+         argv[2]);   // programme à exécuter
+
+// Ajout de messages de debug
+printf("[DEBUG][Enfant %d] DSM_BIN = %s\n", i, dsm_bin);
+printf("[DEBUG][Enfant %d] Commande complète: %s\n", i, remote_cmd);
+
+char *ssh_args[] = {
+    "ssh",
+    "-v",           // Ajout du mode verbose pour SSH
+    proc_array[i].machine_name,
+    remote_cmd,
+    NULL
+};
+
+// Afficher les arguments SSH
+printf("[DEBUG][Enfant %d] Exécution SSH avec arguments:\n", i);
+for(int j = 0; ssh_args[j] != NULL; j++) {
+    printf("  arg[%d] = %s\n", j, ssh_args[j]);
+}
+
+           execvp("ssh", ssh_args);
+           perror("execvp");
+           exit(EXIT_FAILURE);
       }
 
-      pid = fork();                                                            // créer processus enfant
-      if (pid == -1) {                                                         // si échec
-          perror("fork");                                                      // envoyer message
-          exit(EXIT_FAILURE);                                                  // s'arrêter
-      }
+      proc_array[i].pid = pid;
+      proc_array[i].stdout_fd = stdout_pipe[0];
+      proc_array[i].stderr_fd = stderr_pipe[0];
+      printf("[DEBUG][Parent] Fermeture des extrémités d'écriture pour processus %d\n", i);
+      close(stdout_pipe[1]);
+      close(stderr_pipe[1]);
       
-      if (pid == 0) {                                                          // si processus enfant
-           close(stdout_pipe[0]);                                              // fermer lecture stdout
-           close(stderr_pipe[0]);                                              // fermer lecture stderr
-
-           if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1) {                    // dupliquer stdout
-               perror("dup2 stdout");                                          // si échec
-               exit(EXIT_FAILURE);                                             // s'arrêter
-           }
-           if (dup2(stderr_pipe[1], STDERR_FILENO) == -1) {                    // dupliquer stderr
-               perror("dup2 stderr");                                          // si échec
-               exit(EXIT_FAILURE);                                             // s'arrêter
-           }
-
-           char *dsm_bin = getenv("DSM_BIN");                                  // récupérer DSM_BIN
-           if (!dsm_bin) {                                                     // si non défini
-               fprintf(stderr, "[ERROR] DSM_BIN non défini\n");                // message d'erreur
-               exit(EXIT_FAILURE);                                             // s'arrêter
-           }
-
-           char port_str[10];                                                  // chaîne pour le port
-           sprintf(port_str, "%d", listen_port);                               // convertir port en chaîne
-
-           char rank_str[10];                                                  // chaîne pour le rang
-           sprintf(rank_str, "%d", i);                                         // convertir rang en chaîne
-
-           char remote_cmd[4096];                                              // commande à distance
-           snprintf(remote_cmd, sizeof(remote_cmd),                            // préparer la commande
-                   "export DSM_BIN=%s; "
-                   "export PATH=$DSM_BIN:$PATH; "
-                   "%s/dsmwrap %s %s %s",
-                   dsm_bin,
-                   dsm_bin, port_str, rank_str, argv[2]);  
-
-           printf("[DEBUG] Commande à exécuter : %s\n", remote_cmd);           // afficher commande
-
-           char *ssh_args[] = {                                                // arguments ssh
-               "ssh",
-               machines[i + 1],
-               "bash", "-c",
-               remote_cmd,
-               NULL
-           };
-
-           execvp("ssh", ssh_args);                                            // exécuter ssh
-           perror("execvp");                                                   // si échec
-           exit(EXIT_FAILURE);                                                 // s'arrêter
-      }
-
-      // Parent
-      proc_array[i].pid = pid;                                                 // stocker pid
-      proc_array[i].stdout_fd = stdout_pipe[0];                                // stocker fd stdout
-      proc_array[i].stderr_fd = stderr_pipe[0];                                // stocker fd stderr
-      close(stdout_pipe[1]);                                                   // fermer écriture stdout
-      close(stderr_pipe[1]);                                                   // fermer écriture stderr
-      
-      printf("[DEBUG] Processus %d créé avec pid %d\n", i, pid);               // message de confirmation
+      printf("[DEBUG][Parent] Processus %d créé avec pid %d, stdout_fd=%d, stderr_fd=%d\n", 
+             i, pid, stdout_pipe[0], stderr_pipe[0]);
    }
+
 
    printf("\n[DEBUG] === Attente des connexions ===\n");                       // message d'attente
 
