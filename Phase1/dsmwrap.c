@@ -19,20 +19,18 @@
 
 int main(int argc, char *argv[])
 {   
-    if (argc < 5) {                                                                                // si nombre d'argument incorrect                
-        fprintf(stderr, "Usage: %s ip_dsmexec port_dsmexec rang programme [args...]\n", argv[0]);  // spécifier usage de la fonction
+    if (argc < 4) {                                                                                // si nombre d'argument incorrect                
+        fprintf(stderr, "Usage: %s ip_dsmexec port_dsmexec programme [args...]\n", argv[0]);       // spécifier usage de la fonction
         exit(EXIT_FAILURE);                                                                        // renvoyer échec
     }
 
     char *ip_dsmexec = argv[1];                                                                    // récupérer ip envoyé par dsmexec
-    int port_dsmexec = atoi(argv[2]);                                                              // récupérer port envoyé par dsmexec
-    int rang = atoi(argv[3]);                                                                      // récupérer rang du programme envoyé par dsmexec
-    char *programme = argv[4];                                                                     // récupérer nom du programme à exécuter par dsmexec
+    int port_dsmexec = atoi(argv[2]);                                                              // récupérer port envoyé par dsmexec                                                                      // récupérer rang du programme envoyé par dsmexec
+    char *programme = argv[3];                                                                     // récupérer nom du programme à exécuter par dsmexec
 
-    printf("[dsmwrap] Démarrage - IP:%s, Port:%d, Rang:%d, Programme:%s\n",                        // afficher message de confirmation
-           ip_dsmexec, port_dsmexec, rang, programme);
+    printf("[dsmwrap] Démarrage - IP:%s, Port:%d, Programme:%s\n",                                 // afficher message de confirmation
+            ip_dsmexec, port_dsmexec, programme);
 
- 
     int sock = socket(AF_INET, SOCK_STREAM, 0);                                                    // création de socket vers dsmexec
     if (sock == -1) {                                                                              // si erreur
         perror("[dsmwrap] socket");                                                                // envoyer message
@@ -77,12 +75,8 @@ int main(int argc, char *argv[])
 
 
     dsm_proc_conn_t conn_info;                                                                     // allouer la structure de connexion
-    conn_info.rank = rang;                                                                         // assigner le rang
     strncpy(conn_info.machine, hostname, MAX_NAME_SIZE);                                           // assigner le nom d'hôte
-    conn_info.port_num = listen_port;                                                              // assigner le port d'écoute
-
-    printf("[dsmwrap] Envoi des informations de connexion (rang=%d, machine=%s, port=%d)\n",       // afficher message de confirmation
-           conn_info.rank, conn_info.machine, conn_info.port_num);              
+    conn_info.port_num = listen_port;                                                              // assigner le port d'écoute              
     if (send(sock, &conn_info, sizeof(dsm_proc_conn_t), 0) == -1) {                                // si impossibilié d'envoyer les informations de connexion
         perror("[dsmwrap] send conn_info");                                                        // afficher message
         exit(EXIT_FAILURE);                                                                        // renvoyer échec
@@ -94,6 +88,14 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);                                                                        // envoyer échec
     }
 
+    int rank;                                                                                      // assigner variable pour le rang
+    if(recv(sock,&rank, sizeof(int),0)==-1){                                                       // si impossibilité de récupérer le rang
+        perror("[dsmwrap] recv rank");                                                             // afficher message
+        exit(EXIT_FAILURE);                                                                        // envoyer échec                                                                        
+    }
+    
+    conn_info.rank = rank;                                                                         // Mise à jour du rang dans conn_info
+    
     dsm_proc_conn_t *procs_conn = malloc(num_procs * sizeof(dsm_proc_conn_t));                     // allouer structure de connexion
     for (int i = 0; i < num_procs; i++) {                                                          // pour le nombre de processus distants
         if (recv(sock, &procs_conn[i], sizeof(dsm_proc_conn_t), 0) == -1) {                        // si échec de réception des informations de connexion

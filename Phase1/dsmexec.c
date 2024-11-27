@@ -117,12 +117,11 @@ int main(int argc, char *argv[]) {
             snprintf(remote_cmd, sizeof(remote_cmd),                            // créer la ligne de commande
                 "export DSM_BIN=%s; "                                           // exporter variable
                 "export PATH=$DSM_BIN:$PATH; "                                  // exporter le PATH
-                "%s/dsmwrap %s %d %d %s",                                       // ligne d'exécution de dsmwrap et arguments
+                "%s/dsmwrap %s %d %s",                                          // ligne d'exécution de dsmwrap et arguments
                 dsm_bin,                                                        // variable dsm_bin
                 dsm_bin,                                                        // variable dsm_bin
                 "0.0.0.0",                                                      // adresse IP
                 listen_port,                                                    // port d'écoute
-                i,                                                              // rang du processus
                 argv[2]);                                                       // programme à exécuter
 
 
