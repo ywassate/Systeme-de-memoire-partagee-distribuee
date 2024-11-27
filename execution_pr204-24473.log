@@ -1,0 +1,33 @@
+======================= MACHINE FILE :
+piano
+orgue
+virginal
+guitare 
+=====================================
+ 
+ 
+======================= COMMANDS USED :
+/net/npers/mercier/PR204/Suivi_Thor/2024-2025/Repos/pr204-24473/Phase1/bin/dsmexec
+/net/npers/mercier/PR204/Suivi_Thor/2024-2025/Repos/pr204-24473/Phase1/bin/dsmwrap
+/net/npers/mercier/PR204/Suivi_Thor/2024-2025/Repos/pr204-24473/Phase1/bin/truc
+=====================================
+ 
+ 
+======================= REGULAR TEST :
+arg[0] : truc
+open: No such file or directory
+Working dir is /net/npers/mercier/PR204/Suivi_Thor/2024-2025/Repos/pr204-24473/Phase1
+Number of args : 1
+================ Valeur du descripteur : -1
+ 
+=====================================
+ 
+======================= DSMEXEC TEST :
+============================ Essai #1
+timeout: the monitored command dumped core
+============================ Essai #2
+timeout: the monitored command dumped core
+=====================================
+======================= DATA EXCHANGE TEST :
+timeout: the monitored command dumped core
+=====================================
