@@ -1,6 +1,6 @@
 #include "common_impl.h"
+#include <netdb.h>
 
- 
 /* variables globales */
 #define PAGE_SIZE (4096)    // taille d'une page mémoire
 #define MAX_NAME_SIZE (20)  // taille maximum du nom d'une machine repertoriée dans machine_file
@@ -17,8 +17,6 @@ void usage(void) {                                                             /
   fflush(stdout);                                                              // vider le buffer
   exit(EXIT_FAILURE);                                                          // s'arrêter
 }
-
-
 
 
 int main(int argc, char *argv[]) {
@@ -44,15 +42,18 @@ int main(int argc, char *argv[]) {
         proc_array[i].pid = -1;                                                 // assigner le pid
         proc_array[i].rank = i;                                                 // assigner le rang
         proc_array[i].machine_name = strdup(machines[i + 1]);                   // assigner le nom de la machine
+        proc_array[i].sock_fd = -1;                                             // initialiser le descripteur de socket
+        proc_array[i].stdout_fd = -1;                                           // initialiser le descripteur stdout
+        proc_array[i].stderr_fd = -1;                                           // initialiser le descripteur stderr
     }
-    // Obtenir l'adresse IP locale
-    char *local_ip = get_local_ip();
-    if (!local_ip) {
+
+    char *local_ip = get_local_ip();                                            // obtenir l'adresse IP locale
+    if (!local_ip) {                                                            // si échec
         fprintf(stderr, "Impossible d'obtenir l'adresse IP locale\n");
         exit(EXIT_FAILURE);
     }
 
-    int listen_socket = creer_socket(SOCK_STREAM, local_ip,0);                     // paramètrer la socket d'écoute
+    int listen_socket = creer_socket(SOCK_STREAM, local_ip, 0);                 // paramètrer la socket d'écoute
     struct sockaddr_in sin;                                                     // structure d'adressage
     socklen_t len = sizeof(sin);                                                // taille de la structure
 
@@ -62,9 +63,6 @@ int main(int argc, char *argv[]) {
     }
    
     int listen_port = ntohs(sin.sin_port);                                      // convertir le port d'écoute
-    char listen_ip[INET_ADDRSTRLEN];                                            // buffer pour l'adresse IP
-    inet_ntop(AF_INET, &(sin.sin_addr), listen_ip, INET_ADDRSTRLEN);            // récupérer l'adresse IP
-
 
     for(i = 0; i < num_procs ; i++) {                                           // pour le nombre de processus
         int stdout_pipe[2], stderr_pipe[2];                                     // initialiser les pipes
@@ -81,7 +79,6 @@ int main(int argc, char *argv[]) {
         }
       
         if (0 == pid) {                                                         // si processus enfant
-
             close(stdout_pipe[0]);                                              // fermer lecture stdout
             close(stderr_pipe[0]);                                              // fermer lecture stderr
 
@@ -90,14 +87,12 @@ int main(int argc, char *argv[]) {
                 perror("dup2 stdout");                                          // si échec
                 exit(EXIT_FAILURE);                                             // s'arrêter
             }
-            
 
             close(fileno(stderr));                                              // fermer stderr
             if (dup(stderr_pipe[1]) == -1) {                                    // dupliquer stderr
                 perror("dup2 stderr");                                          // si échec
                 exit(EXIT_FAILURE);                                             // s'arrêter
             }
-
 
             char *dsm_bin = getenv("DSM_BIN");                                  // récupérer DSM_BIN
             if (!dsm_bin) {                                                     // si non défini
@@ -111,7 +106,6 @@ int main(int argc, char *argv[]) {
             char rank_str[10];                                                  // chaîne pour le rang
             sprintf(rank_str, "%d", i);                                         // convertir rang en chaîne
 
-
             char remote_cmd[4096];                                              // buffer pour la ligne de commande du processus distant
             snprintf(remote_cmd, sizeof(remote_cmd),                            // créer la ligne de commande
                 "export DSM_BIN=%s; "                                           // exporter variable
@@ -123,43 +117,35 @@ int main(int argc, char *argv[]) {
                 listen_port,                                                    // port d'écoute
                 argv[2]);                                                       // programme à exécuter
 
-
             char *ssh_args[] = {                                                // créer tableau d'arguments pour la commande ssh
                 "ssh",                                                          // ssh
-                "-v",                                                           // ajout du mode verbose pour SSH
                 proc_array[i].machine_name,                                     // machine sur laquelle se connecter
                 remote_cmd,                                                     // ligne de commande à exécuter
                 NULL                                                            // signifier la fin du tableau d'arguments
             };
 
-
             execvp("ssh", ssh_args);                                            // exécuter ssh
             perror("execvp");                                                   // si échec
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
-
         else {
             proc_array[i].pid = pid;                                            // stocker pid
             proc_array[i].stdout_fd = stdout_pipe[0];                           // stocker fd stdout
             proc_array[i].stderr_fd = stderr_pipe[0];                           // stocker fd stderr
             close(stdout_pipe[1]);                                              // fermer écriture stdout
             close(stderr_pipe[1]);                                              // fermer écriture stderr
-      
         }
     }
-
 
     for(i = 0; i < num_procs ; i++) {                                           // pour le nombre de processus
         struct sockaddr_in client_addr;                                         // structure client
         socklen_t client_len = sizeof(client_addr);                             // taille structure
-       
        
         int client_sock = accept(listen_socket,                                 // accepter connexion
                             (struct sockaddr *)&client_addr, 
                             &client_len);
         if (client_sock < 0) {                                                  // si erreur
             if (errno == EINTR) {                                               // si interruption
-                printf("[DEBUG] Accept interrompu, nouvelle tentative\n");      // message
                 i--;                                                            // réessayer
                 continue;                                                       // continuer boucle
             }
@@ -167,44 +153,38 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
 
-        
         dsm_proc_conn_t conn_info;                                              // structure connexion
+        memset(&conn_info, 0, sizeof(dsm_proc_conn_t));                         // initialiser à zéro
+
         if (recv(client_sock, &conn_info, sizeof(dsm_proc_conn_t), 0) < 0) {    // recevoir infos
             perror("recv");                                                     // si erreur
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
 
-
-        for(i = 0; i < num_procs ; i++) {
-            if (strcmp(proc_array[i].machine_name, conn_info.machine) == 0) {
-                conn_info.rank = proc_array[i].rank;
-            }
-        }
-
+        conn_info.rank = i;                                                     // mettre à jour le rang
+        conn_info.fd = client_sock;                                             // mettre à jour le fd
+        proc_array[i].connect_info = conn_info;                                 // stocker les infos
 
         if (send(client_sock, &num_procs, sizeof(int), 0) < 0) {                // envoyer nombre processus
             perror("send num_procs");                                           // si erreur
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
 
-        if (send(client_sock, &conn_info.rank, sizeof(int), 0) < 0) {           // envoyer rang
+        if (send(client_sock, &i, sizeof(int), 0) < 0) {                        // envoyer rang
             perror("send rank");                                                // si erreur
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
 
         for (int j = 0; j < num_procs; j++) {                                   // pour chaque processus
-            if (send(client_sock, &proc_array[j].connect_info,                  // envoyer infos connexion
-                    sizeof(dsm_proc_conn_t), 0) < 0) {
+            dsm_proc_conn_t info_to_send = proc_array[j].connect_info;          // préparer les infos à envoyer
+            info_to_send.rank = j;                                              // assurer le rang correct
+            if (send(client_sock, &info_to_send, sizeof(dsm_proc_conn_t), 0) < 0) {
                 perror("send conn_info");                                       // si erreur
                 exit(EXIT_FAILURE);                                             // s'arrêter
             }
         }
-
-        proc_array[conn_info.rank].connect_info = conn_info;                    // stocker infos
         close(client_sock);                                                     // fermer socket
-       
     }
-
 
     fd_set readfds;                                                             // ensemble descripteurs
     int max_fd = 0;                                                             // fd maximum
@@ -269,7 +249,6 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-    
 
     close(listen_socket);                                                       // fermer socket écoute
     for (i = 0; i < num_procs; i++) {                                           // pour chaque processus

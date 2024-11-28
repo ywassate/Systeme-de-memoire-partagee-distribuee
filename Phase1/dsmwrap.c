@@ -60,11 +60,14 @@ int main(int argc, char *argv[])
     int listen_port = ntohs(sin.sin_port);                                                         // conversion du port d'écoute
 
 
-    dsm_proc_conn_t conn_info;                                                                     // allouer la structure de connexion
-    strncpy(conn_info.machine, hostname, MAX_NAME_SIZE);                                           // assigner le nom d'hôte
-    conn_info.port_num = listen_port;                                                              // assigner le port d'écoute 
-    
-    conn_info.rank = -1;             
+    dsm_proc_conn_t conn_info;                                                 
+    memset(&conn_info, 0, sizeof(dsm_proc_conn_t));
+    strncpy(conn_info.machine, hostname, MAX_NAME_SIZE);                       
+    conn_info.port_num = listen_port;                                          
+    conn_info.rank = -1;
+    conn_info.fd = -1;
+    conn_info.fd_for_exit = -1;
+             
     if (send(sock, &conn_info, sizeof(dsm_proc_conn_t), 0) == -1) {                                // si impossibilié d'envoyer les informations de connexion
         perror("[dsmwrap] send conn_info");                                                        // afficher message
         exit(EXIT_FAILURE);                                                                        // renvoyer échec
@@ -92,9 +95,18 @@ int main(int argc, char *argv[])
             exit(EXIT_FAILURE);                                                                    // envoyer échec
         }
     }
-    
-    close(sock);                                                                                   // fermeture de la socket de communication avec dsmexec
     */
+
+    //close(sock); 
+    if (dup2(sock, 3) == -1) {  // DSMEXEC_FD = 3
+        perror("[dsmwrap] dup2 sock");
+        exit(EXIT_FAILURE);
+    }
+
+    if (dup2(listen_sock, 4) == -1) {  // MASTER_FD = 4
+        perror("[dsmwrap] dup2 listen_sock");
+        exit(EXIT_FAILURE);
+    }                                                                                  // fermeture de la socket de communication avec dsmexec
 
     char **new_argv = malloc((argc - 3) * sizeof(char*));                                          // créer le tableau d'argument pour exécuter le programme suivant
     for (int i = 4; i < argc; i++) {                                                               // pour le nombre d'arguments
