@@ -1,15 +1,6 @@
 #include "common_impl.h"
 
-#include <sys/types.h>       // Définitions de types de base
-#include <sys/socket.h>      // Définitions pour les sockets (inclut SOCK_STREAM)
-#include <netinet/in.h>      // Définitions pour les adresses Internet (inclut sockaddr_in)
-#include <arpa/inet.h>       // Fonctions pour les conversions d'adresses (ex., htons, ntohs)
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <signal.h>
-#include <errno.h>
+ 
 
 /* variables globales */
 #define PAGE_SIZE (4096)    // taille d'une page mémoire
@@ -27,6 +18,8 @@ void usage(void) {                                                             /
   fflush(stdout);                                                              // vider le buffer
   exit(EXIT_FAILURE);                                                          // s'arrêter
 }
+
+
 
 
 int main(int argc, char *argv[]) {
@@ -53,8 +46,14 @@ int main(int argc, char *argv[]) {
         proc_array[i].rank = i;                                                 // assigner le rang
         proc_array[i].machine_name = strdup(machines[i + 1]);                   // assigner le nom de la machine
     }
+    // Obtenir l'adresse IP locale
+    char *local_ip = get_local_ip();
+    if (!local_ip) {
+        fprintf(stderr, "Impossible d'obtenir l'adresse IP locale\n");
+        exit(EXIT_FAILURE);
+    }
 
-    int listen_socket = creer_socket(SOCK_STREAM, NULL, 0);                     // paramètrer la socket d'écoute
+    int listen_socket = creer_socket(SOCK_STREAM, local_ip,0);                     // paramètrer la socket d'écoute
     struct sockaddr_in sin;                                                     // structure d'adressage
     socklen_t len = sizeof(sin);                                                // taille de la structure
 
@@ -120,7 +119,7 @@ int main(int argc, char *argv[]) {
                 "%s/dsmwrap %s %d %s",                                          // ligne d'exécution de dsmwrap et arguments
                 dsm_bin,                                                        // variable dsm_bin
                 dsm_bin,                                                        // variable dsm_bin
-                "0.0.0.0",                                                      // adresse IP
+                local_ip,                                                      // adresse IP
                 listen_port,                                                    // port d'écoute
                 argv[2]);                                                       // programme à exécuter
 
@@ -187,6 +186,7 @@ int main(int argc, char *argv[]) {
             perror("recv");                                                     // si erreur
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
+        conn_info.rank = i;
 
         printf("[DEBUG] Infos reçues du processus %d (rank=%d)\n",              // message de réception
                 i, conn_info.rank);

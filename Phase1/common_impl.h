@@ -1,12 +1,18 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
+
 #include <sys/wait.h>
 #include <sys/ioctl.h>
-#include <errno.h>
-#include <string.h>
 #include <fcntl.h>
+#include <sys/types.h>       // Définitions de types de base
+#include <sys/socket.h>      // Définitions pour les sockets (inclut SOCK_STREAM)
+#include <netinet/in.h>      // Définitions pour les adresses Internet (inclut sockaddr_in)
+#include <arpa/inet.h>       // Fonctions pour les conversions d'adresses (ex., htons, ntohs)
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <errno.h>
+#include <netdb.h>
 
 /* autres includes (eventuellement) */
 
@@ -64,7 +70,7 @@ int creer_socket(int type, const char *ip, int port);  // fonction pour créer u
     
 
 char **read_machine_file(char *argv);  // fonction pour lire les lignes de machine_file              
-
+char* get_local_ip();
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -12,6 +12,7 @@
 #include <errno.h>
 
 
+
 /* variables globales */
 #define PAGE_SIZE (4096)    // taille d'une page mémoire
 #define MAX_NAME_SIZE (20)  // taille maximum du nom d'une machine repertoriée dans machine_file
@@ -142,6 +143,34 @@ char **read_machine_file(char *argv) {                   // fonction pour lire l
    return tab;                                           // renvoyer le tableau
 }
 
+// Fonction pour obtenir l'adresse IP de la machine locale
+char* get_local_ip() {
+    static char ip[INET_ADDRSTRLEN];
+    char hostname[256];
+    struct hostent *host_entry;
+
+    // Obtenir le nom d'hôte
+    if (gethostname(hostname, sizeof(hostname)) < 0) {
+        perror("gethostname");
+        return NULL;
+    }
+
+    // Obtenir les informations sur l'hôte
+    host_entry = gethostbyname(hostname);
+    if (host_entry == NULL) {
+        perror("gethostbyname");
+        return NULL;
+    }
+
+    // Convertir l'adresse IP en chaîne
+    if (inet_ntop(AF_INET, host_entry->h_addr_list[0], ip, INET_ADDRSTRLEN) == NULL) {
+        perror("inet_ntop");
+        return NULL;
+    }
+
+    printf("[DEBUG] Adresse IP locale obtenue: %s\n", ip);
+    return ip;
+}
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -76,7 +76,9 @@ int main(int argc, char *argv[])
 
     dsm_proc_conn_t conn_info;                                                                     // allouer la structure de connexion
     strncpy(conn_info.machine, hostname, MAX_NAME_SIZE);                                           // assigner le nom d'hôte
-    conn_info.port_num = listen_port;                                                              // assigner le port d'écoute              
+    conn_info.port_num = listen_port;                                                              // assigner le port d'écoute 
+    
+    conn_info.rank = -1;             
     if (send(sock, &conn_info, sizeof(dsm_proc_conn_t), 0) == -1) {                                // si impossibilié d'envoyer les informations de connexion
         perror("[dsmwrap] send conn_info");                                                        // afficher message
         exit(EXIT_FAILURE);                                                                        // renvoyer échec
