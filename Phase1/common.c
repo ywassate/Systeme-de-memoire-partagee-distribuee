@@ -1,17 +1,5 @@
 #include "common_impl.h"
 
-#include <sys/types.h>       // Définitions de types de base
-#include <sys/socket.h>      // Définitions pour les sockets (inclut SOCK_STREAM)
-#include <netinet/in.h>      // Définitions pour les adresses Internet (inclut sockaddr_in)
-#include <arpa/inet.h>       // Fonctions pour les conversions d'adresses (ex., htons, ntohs)
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <signal.h>
-#include <errno.h>
-
-
 
 /* variables globales */
 #define PAGE_SIZE (4096)    // taille d'une page mémoire
@@ -32,11 +20,11 @@
 
 
 
-void sigchld_handler(int sig) {                                                        // gérer les processus zombies
-    int status;                                                                        // statut de la sortie
-    pid_t pid;                                                                         // pid du processus à attendre
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {                                // attendre la fin des processus zombie
-        printf("[DEBUG] Processus %d terminé, status %d\n", pid, WEXITSTATUS(status)); // print message de confirmation
+void sigchld_handler(int sig) {                                                                  // gérer les processus zombies
+    int status;                                                                                  // statut de la sortie
+    pid_t pid;                                                                                   // pid du processus à attendre
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {                                          // attendre la fin des processus zombie
+        printf("[sigchld_handler] Processus %d terminé, status %d\n", pid, WEXITSTATUS(status)); // print message de confirmation
     }
 }
 
@@ -80,6 +68,8 @@ int creer_socket(int type, const char *ip, int port) {  // création de socket d
             exit(EXIT_FAILURE);                         // arrêt du programme
         }
     }
+    
+    printf("[creer_socket] Socket créée avec descripteur de fichier : %d\n", sock);
     
     return sock;                                        // retourne descripteur socket configuré
 }
@@ -135,7 +125,7 @@ char **read_machine_file(char *argv) {                   // fonction pour lire l
    sprintf(tab[0], "%d\n", index_tab-1);                 // rajouter le nombre de lignes lues au début du tableau
 
    for (int i = 1; i < index_tab; i++) {                 // afficher le contenu du tableau
-      printf("ligne %i lue dans machine_file %s\n", i, tab[i]); 
+      printf("[read_machine_file] ligne %i lue dans machine_file %s\n", i, tab[i]); 
    }
 
    close(fd);                                            // fermer le processus
@@ -143,33 +133,30 @@ char **read_machine_file(char *argv) {                   // fonction pour lire l
    return tab;                                           // renvoyer le tableau
 }
 
-// Fonction pour obtenir l'adresse IP de la machine locale
-char* get_local_ip() {
-    static char ip[INET_ADDRSTRLEN];
-    char hostname[256];
-    struct hostent *host_entry;
 
-    // Obtenir le nom d'hôte
-    if (gethostname(hostname, sizeof(hostname)) < 0) {
-        perror("gethostname");
-        return NULL;
+char* get_local_ip() {                                                                  // fonction pour obtenir l'adresse IP de la machine distante
+
+    static char ip[INET_ADDRSTRLEN];                                                    // buffer de l'adresse IP         
+    char hostname[256];                                                                 // buffer du nom d'hôte
+    struct hostent *host_entry;                                                         // structure d'adressage
+
+    if (gethostname(hostname, sizeof(hostname)) < 0) {                                  // si échec de récupération du nom d'hôte
+        perror("gethostname");                                                          // envoyer erreur
+        return NULL;                                                                    // rien retourner
     }
 
-    // Obtenir les informations sur l'hôte
-    host_entry = gethostbyname(hostname);
-    if (host_entry == NULL) {
-        perror("gethostbyname");
-        return NULL;
+    host_entry = gethostbyname(hostname);                                               // récupérer les informations de l'hôte grâce à son nom
+    if (host_entry == NULL) {                                                           // si rien n'est obtenu
+        perror("gethostbyname");                                                        // envoyer erreur
+        return NULL;                                                                    // rien renvoyer
     }
 
-    // Convertir l'adresse IP en chaîne
-    if (inet_ntop(AF_INET, host_entry->h_addr_list[0], ip, INET_ADDRSTRLEN) == NULL) {
-        perror("inet_ntop");
-        return NULL;
+    if (inet_ntop(AF_INET, host_entry->h_addr_list[0], ip, INET_ADDRSTRLEN) == NULL) {  // si échec de conversion de l'adresse IP
+        perror("inet_ntop");                                                            // envoyer erreur
+        return NULL;                                                                    // rien renvoyer
     }
-
-    printf("[DEBUG] Adresse IP locale obtenue: %s\n", ip);
-    return ip;
+                              
+    return ip;                                                                          // renvoyer l'adresse IP
 }
 
 

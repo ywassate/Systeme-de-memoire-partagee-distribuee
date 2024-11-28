@@ -1,7 +1,6 @@
 #include "common_impl.h"
 
  
-
 /* variables globales */
 #define PAGE_SIZE (4096)    // taille d'une page mémoire
 #define MAX_NAME_SIZE (20)  // taille maximum du nom d'une machine repertoriée dans machine_file
@@ -66,7 +65,6 @@ int main(int argc, char *argv[]) {
     char listen_ip[INET_ADDRSTRLEN];                                            // buffer pour l'adresse IP
     inet_ntop(AF_INET, &(sin.sin_addr), listen_ip, INET_ADDRSTRLEN);            // récupérer l'adresse IP
 
-    printf("[DEBUG] Socket d'écoute créée sur %s:%d\n", listen_ip, listen_port);
 
     for(i = 0; i < num_procs ; i++) {                                           // pour le nombre de processus
         int stdout_pipe[2], stderr_pipe[2];                                     // initialiser les pipes
@@ -92,12 +90,14 @@ int main(int argc, char *argv[]) {
                 perror("dup2 stdout");                                          // si échec
                 exit(EXIT_FAILURE);                                             // s'arrêter
             }
+            
 
             close(fileno(stderr));                                              // fermer stderr
             if (dup(stderr_pipe[1]) == -1) {                                    // dupliquer stderr
                 perror("dup2 stderr");                                          // si échec
                 exit(EXIT_FAILURE);                                             // s'arrêter
             }
+
 
             char *dsm_bin = getenv("DSM_BIN");                                  // récupérer DSM_BIN
             if (!dsm_bin) {                                                     // si non défini
@@ -119,13 +119,10 @@ int main(int argc, char *argv[]) {
                 "%s/dsmwrap %s %d %s",                                          // ligne d'exécution de dsmwrap et arguments
                 dsm_bin,                                                        // variable dsm_bin
                 dsm_bin,                                                        // variable dsm_bin
-                local_ip,                                                      // adresse IP
+                local_ip,                                                       // adresse IP
                 listen_port,                                                    // port d'écoute
                 argv[2]);                                                       // programme à exécuter
 
-
-            printf("[DEBUG][Enfant %d] DSM_BIN = %s\n", i, dsm_bin);            // afficher message de confirmation
-            printf("[DEBUG][Enfant %d] Commande complète: %s\n", i, remote_cmd);
 
             char *ssh_args[] = {                                                // créer tableau d'arguments pour la commande ssh
                 "ssh",                                                          // ssh
@@ -135,10 +132,6 @@ int main(int argc, char *argv[]) {
                 NULL                                                            // signifier la fin du tableau d'arguments
             };
 
-            printf("[DEBUG][Enfant %d] Exécution SSH avec arguments:\n", i);    // afficher le rang du processus
-            for(int j = 0; ssh_args[j] != NULL; j++) {                          // pour l'ensemble du tableau
-            printf("  arg[%d] = %s\n", j, ssh_args[j]);                         // afficher l'argument
-            }
 
             execvp("ssh", ssh_args);                                            // exécuter ssh
             perror("execvp");                                                   // si échec
@@ -152,18 +145,14 @@ int main(int argc, char *argv[]) {
             close(stdout_pipe[1]);                                              // fermer écriture stdout
             close(stderr_pipe[1]);                                              // fermer écriture stderr
       
-            printf("[DEBUG] Processus %d créé avec pid %d\n", i, pid);          // message de confirmation
         }
     }
 
-
-    printf("\n[DEBUG] === Attente des connexions ===\n");                       // message d'attente
 
     for(i = 0; i < num_procs ; i++) {                                           // pour le nombre de processus
         struct sockaddr_in client_addr;                                         // structure client
         socklen_t client_len = sizeof(client_addr);                             // taille structure
        
-        printf("[DEBUG] Attente connexion processus %d...\n", i);               // message d'attente
        
         int client_sock = accept(listen_socket,                                 // accepter connexion
                             (struct sockaddr *)&client_addr, 
@@ -178,8 +167,6 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
 
-        printf("[DEBUG] Connexion acceptée pour processus %d\n", i);            // message de succès
-
         
         dsm_proc_conn_t conn_info;                                              // structure connexion
         if (recv(client_sock, &conn_info, sizeof(dsm_proc_conn_t), 0) < 0) {    // recevoir infos
@@ -187,9 +174,6 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
         conn_info.rank = i;
-
-        printf("[DEBUG] Infos reçues du processus %d (rank=%d)\n",              // message de réception
-                i, conn_info.rank);
 
 
         if (send(client_sock, &num_procs, sizeof(int), 0) < 0) {                // envoyer nombre processus
@@ -213,10 +197,8 @@ int main(int argc, char *argv[]) {
         proc_array[conn_info.rank].connect_info = conn_info;                    // stocker infos
         close(client_sock);                                                     // fermer socket
        
-        printf("[DEBUG] Configuration terminée pour processus %d\n", i);        // message de fin
     }
 
-    printf("[DEBUG] === Fin des initialisations, début surveillance E/S ===\n");// message début E/S
 
     fd_set readfds;                                                             // ensemble descripteurs
     int max_fd = 0;                                                             // fd maximum
@@ -281,8 +263,7 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-
-    printf("[DEBUG] === Nettoyage final ===\n");                                // message nettoyage
+    
 
     close(listen_socket);                                                       // fermer socket écoute
     for (i = 0; i < num_procs; i++) {                                           // pour chaque processus

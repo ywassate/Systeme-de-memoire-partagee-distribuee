@@ -1,16 +1,5 @@
 #include "common_impl.h"
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <signal.h>
-#include <errno.h>
-
 
 /* variables globales */
 #define PAGE_SIZE (4096)    // taille d'une page mémoire
@@ -28,8 +17,6 @@ int main(int argc, char *argv[])
     int port_dsmexec = atoi(argv[2]);                                                              // récupérer port envoyé par dsmexec                                                                      // récupérer rang du programme envoyé par dsmexec
     char *programme = argv[3];                                                                     // récupérer nom du programme à exécuter par dsmexec
 
-    printf("[dsmwrap] Démarrage - IP:%s, Port:%d, Programme:%s\n",                                 // afficher message de confirmation
-            ip_dsmexec, port_dsmexec, programme);
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);                                                    // création de socket vers dsmexec
     if (sock == -1) {                                                                              // si erreur
@@ -46,12 +33,11 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);                                                                        // renvoyer échec
     }
 
-    printf("[dsmwrap] Tentative de connexion à %s:%d\n", ip_dsmexec, port_dsmexec);                // afficher message de confirmation
     if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {                              // si tentative de connexion ratée
         perror("[dsmwrap] connect");                                                               // afficher message
         exit(EXIT_FAILURE);                                                                        // renvoyer échec
     }
-    printf("[dsmwrap] Connecté à dsmexec\n");                                                      // afficher message de confirmation
+
 
     char hostname[MAX_NAME_SIZE];                                                                  // buffer pour le nom d'hôte
     if (gethostname(hostname, MAX_NAME_SIZE) == -1) {                                              // si impossibilité de récupérer le nom d'hôte
@@ -84,6 +70,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);                                                                        // renvoyer échec
     }
 
+    /*
     int num_procs;                                                                                 // assigner variable pour le nombre total de processus distants 
     if (recv(sock, &num_procs, sizeof(int), 0) == -1) {                                            // si impossibilité de récupérer le nombre
         perror("[dsmwrap] recv num_procs");                                                        // afficher message
@@ -105,6 +92,7 @@ int main(int argc, char *argv[])
             exit(EXIT_FAILURE);                                                                    // envoyer échec
         }
     }
+    */
 
     close(sock);                                                                                   // fermeture de la socket de communication avec dsmexec
 
