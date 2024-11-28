@@ -92,9 +92,9 @@ int main(int argc, char *argv[])
             exit(EXIT_FAILURE);                                                                    // envoyer échec
         }
     }
-    */
-
+    
     close(sock);                                                                                   // fermeture de la socket de communication avec dsmexec
+    */
 
     char **new_argv = malloc((argc - 3) * sizeof(char*));                                          // créer le tableau d'argument pour exécuter le programme suivant
     for (int i = 4; i < argc; i++) {                                                               // pour le nombre d'arguments

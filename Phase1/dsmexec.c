@@ -173,7 +173,13 @@ int main(int argc, char *argv[]) {
             perror("recv");                                                     // si erreur
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
-        conn_info.rank = i;
+
+
+        for(i = 0; i < num_procs ; i++) {
+            if (strcmp(proc_array[i].machine_name, conn_info.machine) == 0) {
+                conn_info.rank = proc_array[i].rank;
+            }
+        }
 
 
         if (send(client_sock, &num_procs, sizeof(int), 0) < 0) {                // envoyer nombre processus
@@ -181,7 +187,7 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
 
-        if (send(client_sock, &i, sizeof(int), 0) < 0) {                        // envoyer rang
+        if (send(client_sock, &conn_info.rank, sizeof(int), 0) < 0) {           // envoyer rang
             perror("send rank");                                                // si erreur
             exit(EXIT_FAILURE);                                                 // s'arrêter
         }
