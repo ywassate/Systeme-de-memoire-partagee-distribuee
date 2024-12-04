@@ -155,16 +155,46 @@ char *dsm_init(int argc, char *argv[])
 
    /* Récupération de la valeur des variables d'environnement */
    /* DSMEXEC_FD et MASTER_FD                                 */
+
+   char *DSMEXEC_FD_ptr = getenv("DSMEXEC_FD");                                                 // récupérer la valeur de DSMEXEC_FD
+   char *MASTER_FD_ptr = getenv("MASTER_FD");                                                   // récupérer la valeur de MASTER_FD
+    
+   if (DSMEXEC_FD_ptr== NULL || MASTER_FD_ptr == NULL) {                                        // si l'un des pointeurs est vide
+      perror("[dsminit] erreur de récupération de DSMEXEC_FD ou MASTER_FD");                    // envoyer erreur
+      exit(EXIT_FAILURE);                                                                       // renvoyer échec
+   }
+
+   int DSMEXEC_FD = atoi(DSMEXEC_FD_ptr);                                                       // convertir la chaîne de caractère en entier
+   int MASTER_FD = atoi(MASTER_FD_ptr);                                                         // convertir la chaîne de caractère en entier
+
+   printf("[dsminit] Valeur de DSMEXEC_FD : %d\n", DSMEXEC_FD);                                 // afficher la valeur de DSMEXEC_FD
+   printf("[dsminit] Valeur de MASTER_FD : %d\n", MASTER_FD);                                   // afficher la valeur de MASTER_FD
    
    /* reception du nombre de processus dsm envoye */
    /* par le lanceur de programmes (DSM_NODE_NUM) */
+   if (recv(DSMEXEC_FD, &DSM_NODE_NUM, sizeof(int), 0) == -1) {                                 // si impossibilité de récupérer le nombre
+      perror("[dsminit] recv DSM_NODE_NUM");                                                    // afficher message
+      exit(EXIT_FAILURE);                                                                       // envoyer échec
+   }
    
    /* reception de mon numero de processus dsm envoye */
    /* par le lanceur de programmes (DSM_NODE_ID)      */
-   
+   if(recv(DSMEXEC_FD,&DSM_NODE_ID, sizeof(int),0)==-1){                                        // si impossibilité de récupérer le rang
+      perror("[dsminit] recv DSM_NODE_ID");                                                     // afficher message
+      exit(EXIT_FAILURE);                                                                       // envoyer échec                                                                        
+   }
+
    /* reception des informations de connexion des autres */
    /* processus envoyees par le lanceur :                */
    /* nom de machine, numero de port, etc.               */
+   
+   dsm_proc_conn_t *procs_conn = malloc(DSM_NODE_NUM * sizeof(dsm_proc_conn_t));                // allouer structure de connexion
+   for (int i = 0; i < DSM_NODE_NUM; i++) {                                                     // pour le nombre de processus distants
+      if (recv(DSMEXEC_FD, &procs_conn[i], sizeof(dsm_proc_conn_t), 0) == -1) {                 // si échec de réception des informations de connexion
+         perror("[dsmwrap] recv proc_conn");                                                    // afficher message
+         exit(EXIT_FAILURE);                                                                    // envoyer échec
+      }
+   }
    
    /* initialisation des connexions              */ 
    /* avec les autres processus : connect/accept */

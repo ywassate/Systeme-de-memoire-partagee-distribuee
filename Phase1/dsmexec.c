@@ -12,6 +12,8 @@ dsm_proc_t *proc_array = NULL;
 /* le nombre de processus effectivement crees */
 volatile int num_procs_creat = 0;
 
+sem_t *barrier;     // barrière de synchro
+
 void usage(void) {                                                             // fonction pour signifier l'usage du script dsmexec          
   fprintf(stdout,"Usage : dsmexec machine_file executable arg1 arg2 ...\n");   // écrire nom du script, arguments
   fflush(stdout);                                                              // vider le buffer
@@ -63,6 +65,12 @@ int main(int argc, char *argv[]) {
     }
    
     int listen_port = ntohs(sin.sin_port);                                      // convertir le port d'écoute
+
+    barrier = sem_open("/barrier_semaphore", O_CREAT | O_EXCL, S_IRUSR | S_IWUSR, num_procs);
+    if (barrier == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
 
     for(i = 0; i < num_procs ; i++) {                                           // pour le nombre de processus
         int stdout_pipe[2], stderr_pipe[2];                                     // initialiser les pipes
@@ -123,6 +131,24 @@ int main(int argc, char *argv[]) {
                 remote_cmd,                                                     // ligne de commande à exécuter
                 NULL                                                            // signifier la fin du tableau d'arguments
             };
+
+            int sval;
+            sem_getvalue(barrier, &sval);
+            if (sval == 0) {
+                // Tous les processus sont arrivés à la barrière, les autres peuvent continuer
+                for (int j = 0; j < num_procs; j++) {
+                    if (sem_post(barrier) == -1) {
+                        perror("sem_post");
+                        exit(EXIT_FAILURE);
+                    }
+                }
+            } else {
+                // Attendre que le dernier processus décrémente le sémaphore
+                if (sem_wait(barrier) == -1) {
+                    perror("sem_wait");
+                    exit(EXIT_FAILURE);
+                }
+            }
 
             execvp("ssh", ssh_args);                                            // exécuter ssh
             perror("execvp");                                                   // si échec

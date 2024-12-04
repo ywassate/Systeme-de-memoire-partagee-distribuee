@@ -1,11 +1,24 @@
+#include <sys/types.h>       // Définitions de types de base
+#include <sys/socket.h>      // Définitions pour les sockets (inclut SOCK_STREAM)
+#include <netinet/in.h>      // Définitions pour les adresses Internet (inclut sockaddr_in)
+#include <arpa/inet.h>       // Fonctions pour les conversions d'adresses (ex., htons, ntohs)
+
+/* autres includes (eventuellement) */
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <signal.h>
 #include <errno.h>
 #include <pthread.h>
-#include <unistd.h>
-#include <sys/mman.h>
+#include <netdb.h>
+#include <sys/wait.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
 #include <semaphore.h>
+#include <sys/stat.h> 
+#include <sys/mman.h>
 
 /* fin des includes */
 

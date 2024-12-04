@@ -73,31 +73,6 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);                                                                        // renvoyer échec
     }
 
-    /*
-    int num_procs;                                                                                 // assigner variable pour le nombre total de processus distants 
-    if (recv(sock, &num_procs, sizeof(int), 0) == -1) {                                            // si impossibilité de récupérer le nombre
-        perror("[dsmwrap] recv num_procs");                                                        // afficher message
-        exit(EXIT_FAILURE);                                                                        // envoyer échec
-    }
-
-    int rank;                                                                                      // assigner variable pour le rang
-    if(recv(sock,&rank, sizeof(int),0)==-1){                                                       // si impossibilité de récupérer le rang
-        perror("[dsmwrap] recv rank");                                                             // afficher message
-        exit(EXIT_FAILURE);                                                                        // envoyer échec                                                                        
-    }
-    
-    conn_info.rank = rank;                                                                         // Mise à jour du rang dans conn_info
-    
-    dsm_proc_conn_t *procs_conn = malloc(num_procs * sizeof(dsm_proc_conn_t));                     // allouer structure de connexion
-    for (int i = 0; i < num_procs; i++) {                                                          // pour le nombre de processus distants
-        if (recv(sock, &procs_conn[i], sizeof(dsm_proc_conn_t), 0) == -1) {                        // si échec de réception des informations de connexion
-            perror("[dsmwrap] recv proc_conn");                                                    // afficher message
-            exit(EXIT_FAILURE);                                                                    // envoyer échec
-        }
-    }
-    */
-
-    //close(sock); 
     if (dup2(sock, 3) == -1) {  // DSMEXEC_FD = 3
         perror("[dsmwrap] dup2 sock");
         exit(EXIT_FAILURE);
@@ -106,7 +81,7 @@ int main(int argc, char *argv[])
     if (dup2(listen_sock, 4) == -1) {  // MASTER_FD = 4
         perror("[dsmwrap] dup2 listen_sock");
         exit(EXIT_FAILURE);
-    }                                                                                  // fermeture de la socket de communication avec dsmexec
+    }                                                                           
 
     char **new_argv = malloc((argc - 3) * sizeof(char*));                                          // créer le tableau d'argument pour exécuter le programme suivant
     for (int i = 4; i < argc; i++) {                                                               // pour le nombre d'arguments
