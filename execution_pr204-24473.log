@@ -1,8 +1,9 @@
 ======================= MACHINE FILE :
 piano
 orgue
-virginal
-guitare 
+celesta
+synthetiseur
+ 
 =====================================
  
  
@@ -24,10 +25,67 @@ Number of args : 1
  
 ======================= DSMEXEC TEST :
 ============================ Essai #1
-timeout: the monitored command dumped core
+[Proc 0 : piano : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 0 : piano : stderr] arg[0] : 
+[Proc 2 : celesta : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 2 : celesta : stderr] arg[0] : 
+[Proc 3 : synthetiseur : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 3 : synthetiseur : stderr] arg[0] : 
+[Proc 1 : orgue : stderr] arg[0] : 
+[Proc 1 : orgue : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
 ============================ Essai #2
-timeout: the monitored command dumped core
+[Proc 0 : piano : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 0 : piano : stderr] arg[0] : 
+[Proc 2 : celesta : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 2 : celesta : stderr] arg[0] : 
+[Proc 3 : synthetiseur : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 3 : synthetiseur : stderr] arg[0] : 
+[Proc 1 : orgue : stderr] arg[0] : 
+[Proc 1 : orgue : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
 =====================================
 ======================= DATA EXCHANGE TEST :
-timeout: the monitored command dumped core
+[Proc 0 : piano : stdout] MASTER_FD is 4 | DSMEXEC_FD is 3
+Info from dsmexec : I'm process 0 / 4 processes total
+[0] got connection info from dsmexec 
+[0] Process 0 is on machine: piano (port #: 40145)
+[0] Process 1 is on machine:  (port #: 0)
+[0] Process 2 is on machine:  (port #: 0)
+[0] Process 3 is on machine:  (port #: 0)
+[Proc 1 : orgue : stdout] MASTER_FD is 4 | DSMEXEC_FD is 3
+Info from dsmexec : I'm process 1 / 4 processes total
+[1] got connection info from dsmexec 
+[1] Process 0 is on machine: piano (port #: 40145)
+[1] Process 1 is on machine: orgue (port #: 42841)
+[1] Process 2 is on machine:  (port #: 0)
+[1] Process 3 is on machine:  (port #: 0)
+[Proc 3 : synthetiseur : stdout] MASTER_FD is 4 | DSMEXEC_FD is 3
+Info from dsmexec : I'm process 2 / 4 processes total
+[2] got connection info from dsmexec 
+[2] Process 0 is on machine: piano (port #: 40145)
+[2] Process 1 is on machine: orgue (port #: 42841)
+[2] Process 2 is on machine: synthetiseur (port #: 38629)
+[2] Process 3 is on machine:  (port #: 0)
+[Proc 2 : celesta : stdout] MASTER_FD is 4 | DSMEXEC_FD is 3
+Info from dsmexec : I'm process 3 / 4 processes total
+[3] got connection info from dsmexec 
+[3] Process 0 is on machine: piano (port #: 40145)
+[3] Process 1 is on machine: orgue (port #: 42841)
+[3] Process 2 is on machine: synthetiseur (port #: 38629)
+[3] Process 3 is on machine: celesta (port #: 35937)
 =====================================
