@@ -206,12 +206,21 @@ char *dsm_init(int argc, char *argv[])
          exit(EXIT_FAILURE);                                                                    // envoyer échec
       }
       printf("========= [dsminit] Structure procs_conn %d remplie \n", i);                      // afficher message de confirmation
-   }
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////          FIN DE PARTIE FONCTIONNELLE     //////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+      if (procs_conn[DSM_NODE_ID].port_num == 0) {
+         procs_conn[DSM_NODE_ID].port_num = 50000 + DSM_NODE_ID; // Port arbitraire unique par processus
+         printf("[dsminit] Port assigné pour le processus %d : %d\n", DSM_NODE_ID, procs_conn[DSM_NODE_ID].port_num);
+      }
+   }
+
+   close(DSMEXEC_FD);
+
+   printf("========= [dsminit] DSMEXEC_FD fermée \n");
+
 
 
    /* initialisation des connexions              */ 
@@ -257,59 +266,69 @@ char *dsm_init(int argc, char *argv[])
    }
    */
 
-   printf("========= [dsminit] MASTER_FD configuré sur le port %d\n", ntohs(addr.sin_port));    // afficher message de confirmation
+   printf("========= [dsminit] port %d\n", ntohs(addr.sin_port));    // afficher message de confirmation
 
    for (int index = 0; index < DSM_NODE_NUM; index++) {
+      if (procs_conn[DSM_NODE_ID].port_num == 0) { // Si le port est égal à 0, attendre les connexions
+         if (index < DSM_NODE_ID) {
+            struct sockaddr_in client_addr;
+            socklen_t client_addr_len = sizeof(client_addr);
 
-   if (index > DSM_NODE_ID) {
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(procs_conn[index].port_num); // Port du processus cible
+            // Accepter la connexion
+            int client_sock = accept(MASTER_FD, (struct sockaddr *)&client_addr, &client_addr_len);
+            if (client_sock == -1) {
+               perror("[dsminit] Erreur lors de l'acceptation de la connexion");
+               exit(EXIT_FAILURE);
+            }
 
-    // Résolution de l'adresse IP du processus cible
-    if (inet_pton(AF_INET, procs_conn[index].machine, &server_addr.sin_addr) <= 0) {
-        fprintf(stderr, "[dsminit] Adresse IP invalide pour le processus %d\n", index);
-        exit(EXIT_FAILURE);
-    }
+            // Stocker le descripteur dans la structure
+            procs_conn[index].fd = client_sock;
 
-    // Création de la socket
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock == -1) {
-        perror("Erreur lors de la création du socket");
-        exit(EXIT_FAILURE);
-    }
+            // Afficher les informations de connexion
+            char client_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+            printf("Connexion acceptée depuis le processus de rang %d (IP : %s, Port : %d)\n",
+                   index, client_ip, ntohs(client_addr.sin_port));
+         }
+      } else { // Sinon, essayer de connecter aux autres processus
+         if (index > DSM_NODE_ID) {
+            struct sockaddr_in server_addr;
+            memset(&server_addr, 0, sizeof(server_addr));
+            server_addr.sin_family = AF_INET;
+            server_addr.sin_port = htons(procs_conn[index].port_num); // Port du processus cible
+            printf("[dsminit] Résolution de l'adresse pour le processus %d : %s\n", index, procs_conn[index].machine);
 
-    // Connexion au processus cible
-    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
-        perror("Erreur lors de la connexion");
-        exit(EXIT_FAILURE);
-    }
+            struct addrinfo hints, *res;
+            memset(&hints, 0, sizeof(hints));
+            hints.ai_family = AF_INET; // IPv4 uniquement
 
-    // Stocker le descripteur dans la structure
-    procs_conn[index].fd = sock;
-    printf("Connexion établie avec le processus de rang %d\n", index);
-    
-   } else if (index < DSM_NODE_ID) {
-    struct sockaddr_in client_addr;
-    socklen_t client_addr_len = sizeof(client_addr);
+            if (getaddrinfo(procs_conn[index].machine, NULL, &hints, &res) != 0) {
+               fprintf(stderr, "[dsminit] Impossible de résoudre l'adresse pour %s\n", procs_conn[index].machine);
+               exit(EXIT_FAILURE);
+            }
 
-    // Accepter la connexion
-    int client_sock = accept(MASTER_FD, (struct sockaddr *)&client_addr, &client_addr_len);
-    if (client_sock == -1) {
-        perror("[dsminit] Erreur lors de l'acceptation de la connexion");
-        exit(EXIT_FAILURE);
-    }
+            struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
+            server_addr.sin_addr = ipv4->sin_addr;
+            freeaddrinfo(res);
 
-    // Stocker le descripteur dans la structure
-    procs_conn[index].fd = client_sock;
+            // Création de la socket
+            int sock = socket(AF_INET, SOCK_STREAM, 0);
+            if (sock == -1) {
+               perror("Erreur lors de la création du socket");
+               exit(EXIT_FAILURE);
+            }
 
-    // Afficher les informations de connexion
-    char client_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-    printf("Connexion acceptée depuis le processus de rang %d (IP : %s, Port : %d)\n",
-           index, client_ip, ntohs(client_addr.sin_port));
-   }
+            // Connexion au processus cible
+            if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+               perror("Erreur lors de la connexion");
+               exit(EXIT_FAILURE);
+            }
+
+            // Stocker le descripteur dans la structure
+            procs_conn[index].fd = sock;
+            printf("Connexion établie avec le processus de rang %d\n", index);
+         }
+      } 
    }
 
 
