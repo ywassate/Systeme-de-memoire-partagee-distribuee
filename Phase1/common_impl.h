@@ -11,11 +11,14 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <pthread.h>
 #include <netdb.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
-
+#include <semaphore.h>
+#include <sys/stat.h> 
+#include <sys/mman.h>
 
 
 
