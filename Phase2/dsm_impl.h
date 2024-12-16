@@ -20,6 +20,7 @@
 #include <sys/stat.h> 
 #include <sys/mman.h>
 
+
 /* fin des includes */
 
 #define TOP_ADDR    (0x40000000)
@@ -64,6 +65,7 @@ typedef struct
 {
   int source;
   int page_num;
+  dsm_req_type_t type;  // type de requête (cf structure ci-dessus)
 } dsm_req_t;
 
 #define MAX_STR  (1024)
