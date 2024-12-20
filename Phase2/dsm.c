@@ -4,9 +4,19 @@
 int DSM_NODE_NUM; /* nombre de processus dsm */
 int DSM_NODE_ID;  /* rang (= numero) du processus */ 
 int MASTER_FD;    /* descripteur de fichier de la socket de communication dsm */
+
 dsm_proc_conn_t *procs; 
+
 static int *sockets = NULL;  // tableau global des sockets
 static dsm_page_info_t table_page[PAGE_NUMBER];
+static volatile int running = 1;  
+static pthread_t listener_thread;
+
+static pthread_mutex_t dsm_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t dsm_cond = PTHREAD_COND_INITIALIZER;
+static volatile int page_ready = 0;
+
+
 
 // structure de message de test
 struct test_msg {
@@ -229,76 +239,196 @@ static int dsm_comm_daemon(void) {                                              
 }
 
 
-static void dsm_handler( void ) {  
-   /* 
-   struct dsm_req_t req;                                                             // allouer la mémoire pour recevoir la structure de communication
+static void dsm_handler(int sockfd) {
+    dsm_req_t req;
+    char buffer[PAGE_SIZE];
 
-   if (dsm_recv(MASTER_FD, &req, sizeof(req)) != 0) {                                // recevoir la structure
-      fprintf(stderr, "[dsm_handler] Erreur lors de la réception de la requête\n");  // si échec, afficher message
-      exit(EXIT_FAILURE);                                                            // renvoyer échec
-   }
+    if (dsm_recv(sockfd, &req, sizeof(dsm_req_t)) <= 0) {
+        fprintf(stderr, "[%d] Failed to receive request\n", DSM_NODE_ID);
+        return;
+    }
 
-   switch (req.type) {                                                               // examiner le type de requête reçue
+    switch (req.type) {
+        case DSM_REQ: {
+            int page_num = req.page_num;
+            // Vérifier si on est le propriétaire actuel de la page
+            if (get_owner(page_num) == DSM_NODE_ID) {
+                // Envoyer la page demandée
+                void *page_addr = num2address(page_num);
+                memcpy(buffer, page_addr, PAGE_SIZE);
 
-      case DSM_REQ:                                                                  // si demande d'accès à une page
-         printf("[dsm_handler] DSM_REQ source = %d / page_num = %d\n", req.source, req.page_num);
-         // gestion de la requête DSM_REQ
-         break;
+                // Envoyer d'abord un message DSM_PAGE pour signaler l'envoi de la page
+                dsm_req_t page_msg;
+                page_msg.type = DSM_PAGE;
+                page_msg.source = DSM_NODE_ID;
+                page_msg.page_num = page_num;
+                // Pas de page_msg.access
 
-      case DSM_PAGE:                                                                 // si demande 
-         printf("[dsm_handler] DSM_PAGE source = %d / page_num = %d\n", req.source, req.page_num);
-         // gestion de la requête DSM_PAGE
-         break;
-      
-      case DSM_NREQ:                                                                 // si demande d'accès à plusieurs (?) pages
-         printf("[dsm_handler] DSM_NREQ source = %d / page_num = %d\n", req.source, req.page_num);
-         // gestion de la finalisation DSM
-         break;
+                if (dsm_send(sockets[req.source], &page_msg, sizeof(dsm_req_t)) <= 0) {
+                    fprintf(stderr, "[%d] Failed to send DSM_PAGE header\n", DSM_NODE_ID);
+                    return;
+                }
 
-      case DSM_FINALIZE:                                                             // si annonce de finalisation
-         printf("[dsm_handler] DSM_FINALIZE source = %d\n", req.source);
-         // gestion de la finalisation DSM
-         break;
+                // Puis envoyer le contenu de la page
+                if (dsm_send(sockets[req.source], buffer, PAGE_SIZE) <= 0) {
+                    fprintf(stderr, "[%d] Failed to send page data\n", DSM_NODE_ID);
+                    return;
+                }
 
-      default:                                                                       // par défaut
-         fprintf(stderr, "[dsm_handler] Type de requête inconnu\n");                 // signaler requête inconnue
-         exit(EXIT_FAILURE);                                                         // renvoyer échec
-   }
-   */
+                // Mettre à jour notre table interne
+                dsm_protect_page(page_num, PROT_NONE);
+                dsm_change_info(page_num, INVALID, req.source);
+
+                // Notifier les autres processus (DSM_NREQ) pour leur dire que le owner a changé
+                dsm_req_t notify_req;
+                notify_req.type = DSM_NREQ;
+                notify_req.source = DSM_NODE_ID;
+                notify_req.page_num = page_num;
+                
+
+                for (int j = 0; j < DSM_NODE_NUM; j++) {
+                    if (j != DSM_NODE_ID && j != req.source && sockets[j] >= 0) {
+                        dsm_send(sockets[j], &notify_req, sizeof(dsm_req_t));
+                    }
+                }
+            }
+            break;
+        }
+        case DSM_PAGE: {
+            // On va recevoir une page en réponse à un DSM_REQ qu’on a envoyé.
+            // Le message DSM_PAGE est déjà reçu, maintenant on reçoit le contenu de la page.
+            if (dsm_recv(sockfd, buffer, PAGE_SIZE) <= 0) {
+                fprintf(stderr, "[%d] Failed to receive page data\n", DSM_NODE_ID);
+                return;
+            }
+
+            int page_num = req.page_num;
+            // Allouer la page localement
+            dsm_alloc_page(page_num);
+            void *page_addr = num2address(page_num);
+            memcpy(page_addr, buffer, PAGE_SIZE);
+
+            // Sans access, on suppose que l’accès est toujours en écriture
+            dsm_protect_page(page_num, PROT_READ | PROT_WRITE);
+            dsm_change_info(page_num, WRITE, DSM_NODE_ID);
+
+            // Signaler que la page est prête
+            page_ready = 1;
+            pthread_cond_signal(&dsm_cond);
+
+            break;
+        }
+        case DSM_NREQ: {
+            // Notification de changement de propriétaire
+            int page_num = req.page_num;
+            // Le owner a changé, on invalide chez nous si on n’est pas le nouveau propriétaire
+            if (get_owner(page_num) != req.source) {
+                dsm_protect_page(page_num, PROT_NONE);
+                dsm_change_info(page_num, INVALID, req.source);
+            }
+            break;
+        }
+        case DSM_FINALIZE: {
+            // Un autre processus signale qu’il se termine.
+            running = 0;
+            pthread_cond_broadcast(&dsm_cond);
+            break;
+        }
+        default:
+            fprintf(stderr, "[%d] Unknown request type %d from %d\n", 
+                    DSM_NODE_ID, req.type, req.source);
+            break;
+    }
 }
 
-
 /* traitant de signal adequat */
-static void segv_handler(int sig, siginfo_t *info, void *context)
-{
-   /* A completer */
-   /* adresse qui a provoque une erreur */
-   void  *addr = info->si_addr;   
-  /* Si ceci ne fonctionne pas, utiliser a la place :*/
-  /*
-   #ifdef __x86_64__
-   void *addr = (void *)(context->uc_mcontext.gregs[REG_CR2]);
-   #elif __i386__
-   void *addr = (void *)(context->uc_mcontext.cr2);
-   #else
-   void  addr = info->si_addr;
-   #endif
-   */
-   /*
-   pour plus tard (question ++):
-   dsm_access_t access  = (((ucontext_t *)context)->uc_mcontext.gregs[REG_ERR] & 2) ? WRITE_ACCESS : READ_ACCESS;   
-  */   
-   /* adresse de la page dont fait partie l'adresse qui a provoque la faute */
-   void  *page_addr  = (void *)(((unsigned long) addr) & ~(PAGE_SIZE-1));
+static void segv_handler(int sig, siginfo_t *info, void *context) {
+    void *addr = info->si_addr;
+    
+    if ((addr >= (void *)BASE_ADDR) && (addr < (void *)TOP_ADDR)) {
+        pthread_mutex_lock(&dsm_mutex);
+        
+        int page_num = address2num(addr);
+        dsm_page_owner_t owner = get_owner(page_num);
+        
+        printf("[%d] SIGSEGV on page %d owned by %d\n", DSM_NODE_ID, page_num, owner);
 
-   if ((addr >= (void *)BASE_ADDR) && (addr < (void *)TOP_ADDR))
-     {
-	dsm_handler();
-     }
-   else
-     {
-	/* SIGSEGV normal : ne rien faire*/
-     }
+        // Envoyer la requête
+        dsm_req_t req;
+        req.source = DSM_NODE_ID;
+        req.page_num = page_num;
+        req.type = DSM_REQ;
+
+        if (dsm_send(sockets[owner], &req, sizeof(dsm_req_t)) < 0) {
+            fprintf(stderr, "[%d] Failed to send page request\n", DSM_NODE_ID);
+            pthread_mutex_unlock(&dsm_mutex);
+            return;
+        }
+
+        // Attendre que la page soit prête
+        while (!page_ready) {
+            pthread_cond_wait(&dsm_cond, &dsm_mutex);
+        }
+        page_ready = 0;
+
+        pthread_mutex_unlock(&dsm_mutex);
+    }
+}
+
+static void *dsm_listener_thread(void *arg) {
+    printf("[%d] Thread d'écoute démarré\n", DSM_NODE_ID);
+    fflush(stdout);
+
+    while (running) {
+        fd_set readfds;
+        int max_fd = -1;
+
+        FD_ZERO(&readfds);
+        for (int i = 0; i < DSM_NODE_NUM; i++) {
+            if (sockets[i] >= 0) {
+                FD_SET(sockets[i], &readfds);
+                if (sockets[i] > max_fd) max_fd = sockets[i];
+            }
+        }
+
+        if (max_fd < 0) {
+            // Aucune socket valide, on fait une courte pause
+            usleep(10000);  // 10ms
+            if (!running) break;
+            continue;
+        }
+
+        // Timeout pour vérifier régulièrement 'running'
+        struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};  // 100ms
+        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
+        if (ready < 0) {
+            if (errno == EINTR) continue;  // interruption par un signal
+            if (!running) break;
+            perror("select");
+            continue;
+        }
+
+        // Si running est passé à 0, on sort
+        if (!running) break;
+
+        for (int i = 0; i < DSM_NODE_NUM; i++) {
+            if (sockets[i] >= 0 && FD_ISSET(sockets[i], &readfds)) {
+                dsm_handler(sockets[i]);
+
+                // Si dsm_handler a provoqué une finalisation (running=0)
+                // on sort immédiatement pour ne pas continuer de lire sur des sockets fermées
+                if (!running) {
+                    break;
+                }
+            }
+        }
+
+        if (!running) break;
+    }
+
+    printf("[%d] Thread d'écoute terminé\n", DSM_NODE_ID);
+    fflush(stdout);
+    return NULL;
 }
 
 
@@ -457,6 +587,14 @@ char *dsm_init(int argc, char *argv[]) {
         perror("sigaction");                                                                      // si échec, envoyer message
         exit(EXIT_FAILURE);                                                                       // renvoyer échec
     }
+    
+    /* Création du thread d'écoute */
+    printf("[%d] Creating listener thread\n", DSM_NODE_ID);
+    fflush(stdout);
+    if (pthread_create(&listener_thread, NULL, dsm_listener_thread, NULL) != 0) {            
+        perror("pthread_create");
+        exit(EXIT_FAILURE);
+    }
 
     printf("[%d] Initialisation DSM terminée\n", DSM_NODE_ID);                                    // message de fin
     
@@ -464,64 +602,77 @@ char *dsm_init(int argc, char *argv[]) {
 }
 
 
-void dsm_finalize(void) {                                                         // fonction pour finaliser la dsm
 
+void dsm_finalize(void) {                                                         // fonction pour finaliser la dsm
     printf("[%d] Début de dsm_finalize\n", DSM_NODE_ID);                          // message d'entrée
-    
+    fflush(stdout);
+
     struct test_msg msg = {                                                       // structure de finalisation
         .type = DSM_FINALIZE,                                                     // type de fin
         .sender_id = DSM_NODE_ID,                                                 // processus local
         .data = 0                                                                 // aucune donnée
     };
 
+    // Envoyer un message de finalisation à tous les autres processus
+    // Avant de fermer les sockets, on informe les autres qu'on se finalise
     for(int i = 0; i < DSM_NODE_NUM; i++) {                                       // pour l'ensemble des processus
         if (i != DSM_NODE_ID && sockets[i] >= 0) {                                // excepté le processus local et si la socket est valide
             printf("[%d] Envoi message de finalisation à %d\n", DSM_NODE_ID, i);  // afficher message
+            fflush(stdout);
             dsm_send(sockets[i], &msg, sizeof(msg));                              // envoyer message de finalisation
         }
     }
 
-    if (sockets) {                                                                // si le tableau des socket est non-vide 
-        for(int i = 0; i < DSM_NODE_NUM; i++) {                                   // pour l'ensemble des processus
+    // Avant de fermer les sockets, on doit s'assurer que le thread d'écoute n'est plus en cours d'exécution
+    // pour éviter qu'il ne fasse un select ou un recv sur des sockets déjà fermées.
+    pthread_mutex_lock(&dsm_mutex);                                               // verrouiller le mutex pour protéger 'running'
+    running = 0;                                                                  // signaler l'arrêt du thread d'écoute
+    pthread_mutex_unlock(&dsm_mutex);                                             // libérer le mutex
+
+    // Attendre la fin du thread d'écoute
+    // Le thread d'écoute va détecter que running=0 et sortir de sa boucle
+    pthread_join(listener_thread, NULL);                                          // attendre la fin du thread
+
+    // Maintenant que le thread d'écoute est terminé, on peut fermer les sockets en toute sécurité
+    if (sockets) {                                                                // si le tableau des sockets est non NULL
+        for(int i = 0; i < DSM_NODE_NUM; i++) {                                   // pour chaque socket
             if (sockets[i] >= 0) {                                                // si la socket est valide
-                printf("[%d] Fermeture socket %d\n", DSM_NODE_ID, i);             // afficher message
+                printf("[%d] Fermeture socket %d\n", DSM_NODE_ID, i);             // message indiquant la fermeture
+                fflush(stdout);
                 shutdown(sockets[i], SHUT_RDWR);                                  // arrêt propre de la socket
                 close(sockets[i]);                                                // fermer le descripteur de fichier de la socket
-            }                  
+                sockets[i] = -1;                                                  // marquer la socket comme invalide
+            }
         }
-        free(sockets);                                                            // libérer le tableau
-        sockets = NULL;                                                           // remettre le pointeur à NULL
+        free(sockets);                                                            // libérer la mémoire allouée pour le tableau des sockets
+        sockets = NULL;                                                           // remettre le pointeur à NULL par sécurité
     }
 
-    if (procs) {                                                                  // si les structures d'information des processus sont non-vides
-        free(procs);                                                              // les libérer
-        procs = NULL;                                                             // mettre le pointeur à NULL
+    // Libérer les infos de connexion des processus
+    if (procs) {                                                                  // si la structure d'informations sur les processus est allouée
+        free(procs);                                                              // libérer la mémoire
+        procs = NULL;                                                             // remettre le pointeur à NULL
     }
 
-    
+    // Mettre à jour une variable d'environnement FINALIZE_COUNTER (optionnel)
+    // Ce code part du principe que FINALIZE_COUNTER est défini avant
     char *FINALIZE_COUNTER_ptr = getenv("FINALIZE_COUNTER");
     if (FINALIZE_COUNTER_ptr == NULL) {
-        fprintf(stderr, "Erreur : FINALIZE_COUNTER non défini\n");
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "[%d] Erreur : FINALIZE_COUNTER non défini\n", DSM_NODE_ID);
+        fflush(stderr);
+        // On peut choisir d'arrêter le programme ici ou de continuer, selon la logique du projet.
+        // exit(EXIT_FAILURE);
+    } else {
+        int FINALIZE_COUNTER = atoi(FINALIZE_COUNTER_ptr);                        // convertir la valeur actuelle en entier
+        FINALIZE_COUNTER++;                                                       // incrémenter le compteur
+        char new_value[20];
+        snprintf(new_value, sizeof(new_value), "%d", FINALIZE_COUNTER);           // convertir en chaîne
+        if (setenv("FINALIZE_COUNTER", new_value, 1) == -1) {                     // mettre à jour la variable d'environnement
+            perror("setenv");
+            // exit(EXIT_FAILURE); // selon la logique du projet
+        }
     }
-
-    // Convertir la valeur en entier
-    int FINALIZE_COUNTER = atoi(FINALIZE_COUNTER_ptr);
-
-    // Incrémenter la valeur
-    FINALIZE_COUNTER++;
-
-    // Convertir la nouvelle valeur en chaîne
-    char new_value[20];
-    snprintf(new_value, sizeof(new_value), "%d", FINALIZE_COUNTER);
-
-    // Mettre à jour FINALIZE_COUNTER dans l'environnement
-    if (setenv("FINALIZE_COUNTER", new_value, 1) == -1) {
-        perror("setenv");
-        exit(EXIT_FAILURE);
-    }
-
-
 
     printf("[%d] Fin de dsm_finalize\n", DSM_NODE_ID);                            // message de sortie
+    fflush(stdout);
 }
