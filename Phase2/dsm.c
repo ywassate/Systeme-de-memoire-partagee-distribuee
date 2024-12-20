@@ -109,11 +109,11 @@ static int dsm_send(int dest,void *buf,size_t size) {                          /
       ssize_t n = send(dest, (char *)buf + sent_bytes, size - sent_bytes, 0);  // envoyer ce qui reste
       if (n == -1) {                                                           // si échec
          perror("[dsm_send] échec d'envoi");                                   // envoyer message d'erreur
-         return 1;                                                             // renvoyer échec
+         return 0;                                                             // renvoyer échec
       }
       sent_bytes += n;                                                         // incrémenter compteur de quantité envoyée
    }
-   return 0;                                                                   // renvoyer succès
+   return 1;                                                                   // renvoyer succès
 }
 
 
@@ -124,172 +124,112 @@ static int dsm_recv(int from,void *buf,size_t size)  {                          
       ssize_t n = recv(from, (char *)buf + received_bytes, size - received_bytes, 0);  // recevoir ce qui reste
       if (n == -1) {                                                                   // si échec
          perror("[dsm_recv] échec de récupération");                                   // envoyer message d'erreur 
-         return 1;                                                                     // renvoyer échec
+         return 0;                                                                     // renvoyer échec
       } else if (n == 0) {                                                             // si rien n'est reçu
          fprintf(stderr, "[dsm_recv] connexion terminée\n");                           // annoncer connexion finie
-         return 1;                                                                     // renvoyer échec
+         return 0;                                                                     // renvoyer échec
       }
       received_bytes += n;                                                             // incrémenter compteur de bits reçus
    }
-   return 0;                                                                           // renvoyer succès
+   return 1;                                                                           // renvoyer succès
 }
 
-/* Function to check if a socket is already bound */
-int is_socket_bound(int sockfd) {
-    struct sockaddr_in addr;
-    socklen_t len = sizeof(addr);
+
+static int dsm_comm_daemon(void) {                                                               // fonction pour mettre en place les communications entre processus
+ 
+    printf("[%d] Début de dsm_comm_daemon\n", DSM_NODE_ID);                                      // message d'entrée     
+
+    sockets = malloc(DSM_NODE_NUM * sizeof(int));                                                // allocation du tableau des sockets
+    if (!sockets) {                                                                              // si échec
+        perror("malloc sockets");                                                                // envoyer message
+        exit(EXIT_FAILURE);                                                                      // renvoyer échec
+    }
+    memset(sockets, -1, DSM_NODE_NUM * sizeof(int));                                             // mettre tous les bits de mémoire à -1
     
-    // Try to get the socket name
-    int ret = getsockname(sockfd, (struct sockaddr*)&addr, &len);
-    
-    if (ret == 0) {
-        // Socket is bound, let's print some info
-        printf("Socket is bound to port %d\n", ntohs(addr.sin_port));
-        char ip[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &(addr.sin_addr), ip, INET_ADDRSTRLEN);
-        printf("Bound to address: %s\n", ip);
-        return 1;
-    } else {
-        if (errno == EINVAL) {
-            // Socket is not bound
-            printf("Socket is not bound\n");
-            return 0;
-        } else {
-            // Some other error occurred
-            printf("Error checking socket: %s\n", strerror(errno));
-            return -1;
-        }
-    }
-}
+    sockets[DSM_NODE_ID] = MASTER_FD;                                                            // assigner le MASTER_FD du processus
 
-static int dsm_comm_daemon(void) {
-    printf("[%d] Starting communication setup\n", DSM_NODE_ID);
-    fflush(stdout);
-
-    // Allocation du tableau de sockets
-    sockets = malloc(DSM_NODE_NUM * sizeof(int));
-    if (!sockets) {
-        perror("malloc sockets");
-        return -1;
-    }
-    memset(sockets, -1, DSM_NODE_NUM * sizeof(int));
-    
-    // Stocker notre MASTER_FD
-    sockets[DSM_NODE_ID] = MASTER_FD;
-
-    // Configuration du socket pour écoute
-    int opt = 1;
-    if (setsockopt(MASTER_FD, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-        perror("setsockopt");
-        return -1;
+    if (listen(MASTER_FD, DSM_NODE_NUM - 1) < 0) {                                               // mettre MASTER_FD en écoute
+        perror("listen");                                                                        // si échec, envoyer erreur
+        exit(EXIT_FAILURE);                                                                      // renvoyer échec
     }
 
-    // Vérifier si le socket est bien lié
-    struct sockaddr_in addr;
-    socklen_t len = sizeof(addr);
-    if (getsockname(MASTER_FD, (struct sockaddr*)&addr, &len) == 0) {
-        printf("[%d] MASTER_FD is bound to port %d\n", DSM_NODE_ID, ntohs(addr.sin_port));
-    } else {
-        perror("getsockname");
-        return -1;
-    }
 
-    // Passer en mode écoute
-    if (listen(MASTER_FD, DSM_NODE_NUM - 1) < 0) {
-        perror("listen");
-        return -1;
-    }
+    for (int i = DSM_NODE_ID + 1; i < DSM_NODE_NUM; i++) {                                       // pour l'ensemble des processus supérieur au DSM_NODE_ID
 
-    // Phase 1: Accepter les connexions des processus de rang inférieur
-    printf("[%d] Waiting for connections from lower rank processes\n", DSM_NODE_ID);
-    for (int i = DSM_NODE_ID + 1; i < DSM_NODE_NUM; i++) {
-        printf("[%d] Waiting for connection from process %d\n", DSM_NODE_ID, i);
-        fflush(stdout);
-
-        struct sockaddr_in client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        int client_fd = accept(MASTER_FD, (struct sockaddr*)&client_addr, &client_len);
+        struct sockaddr_in client_addr;                                                          // initialiser stucture de connexion
+        socklen_t client_len = sizeof(client_addr);                                              // longueur de la structure
+        int client_fd = accept(MASTER_FD, (struct sockaddr*)&client_addr, &client_len);          // accepter la connexion sur la socket client_fd
         
-        if (client_fd < 0) {
-            perror("accept");
-            return -1;
+        if (client_fd < 0) {                                                                     // si échec
+            perror("accept");                                                                    // envoyer message
+            exit(EXIT_FAILURE);                                                                  // renvoyer échec
         }
 
-        // Recevoir l'ID du processus qui se connecte
-        int remote_id;
-        if (recv(client_fd, &remote_id, sizeof(remote_id), MSG_WAITALL) <= 0) {
-            perror("recv remote_id");
-            close(client_fd);
-            return -1;
+        int remote_id;                                                                           // initialiser un DSM_NODE_ID pour le processus distant
+        if (recv(client_fd, &remote_id, sizeof(remote_id), MSG_WAITALL) <= 0) {                  // recevoir son DSM_NODE_ID
+            perror("recv remote_id");                                                            // si échec, envoyer message
+            close(client_fd);                                                                    // fermer la socket
+            exit(EXIT_FAILURE);                                                                  // renvoyer échec
         }
 
-        sockets[remote_id] = client_fd;
-        printf("[%d] Accepted connection from process %d\n", DSM_NODE_ID, remote_id);
-        fflush(stdout);
+        sockets[remote_id] = client_fd;                                                          // conserver la socket assignée
+        printf("[%d] connexion acceptée du processus %d\n", DSM_NODE_ID, remote_id);             // message de confirmation
     }
 
-    // Phase 2: Se connecter aux processus de rang inférieur
-    printf("[%d] Connecting to lower rank processes\n", DSM_NODE_ID);
-    for (int i = 0; i < DSM_NODE_ID; i++) {
-        printf("[%d] Connecting to process %d\n", DSM_NODE_ID, i);
-        fflush(stdout);
 
-        int sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) {
-            perror("socket");
-            return -1;
+    for (int i = 0; i < DSM_NODE_ID; i++) {                                                      // pour l'ensemble des processus inférieurs au DSM_NODE_ID
+    
+
+        int sock = socket(AF_INET, SOCK_STREAM, 0);                                              // création d'une socket
+        if (sock < 0) {                                                                          // si échec
+            perror("socket");                                                                    // envoyer message
+            exit(EXIT_FAILURE);                                                                  // renvoyer échec
         }
 
-        struct sockaddr_in server_addr;
-        memset(&server_addr, 0, sizeof(server_addr));
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(procs[i].port_num);
+        struct sockaddr_in server_addr;                                                          // initialiser structure de connexion 
+        memset(&server_addr, 0, sizeof(server_addr));                                            // mettre les bits de mémoire à 0
+        server_addr.sin_family = AF_INET;                                                        // paramétrer la structure
+        server_addr.sin_port = htons(procs[i].port_num);                                         // assigner le port correspondant au processus
 
-        struct hostent *he = gethostbyname(procs[i].machine);
-        if (!he) {
-            perror("gethostbyname");
-            close(sock);
-            return -1;
+        struct hostent *he = gethostbyname(procs[i].machine);                                    // récupérer l'adresse IP de la machine distante
+        if (!he) {                                                                               // si échec
+            perror("gethostbyname");                                                             // envoyer message
+            close(sock);                                                                         // fermer la socket
+            exit(EXIT_FAILURE);                                                                  // renvoyer échec         
         }
-        memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);
+        memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);                         // copier l'IP dans la structure de connexion
 
-        // Tentative de connexion avec retry
-        int connected = 0;
-        for (int retry = 0; retry < 5 && !connected; retry++) {
-            if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0) {
-                connected = 1;
-                break;
+        int connected = 0;                                                                       // indicateur de connexion
+        for (int retry = 0; retry < 5 && !connected; retry++) {                                  // retenter 5 fois tant qu'on est pas connecté
+            if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0) {       // tenter de se connecter
+                connected = 1;                                                                   // si réussite, mettre indicateur à 1
+                break;                                                                           // arrêt
             }
-            printf("[%d] Connection attempt %d to process %d failed, retrying...\n",
-                   DSM_NODE_ID, retry + 1, i);
-            sleep(1);
+            sleep(1);                                                                            // attendre un peu
         }
 
-        if (!connected) {
-            perror("connect failed after retries");
-            close(sock);
-            return -1;
+        if (!connected) {                                                                        // si échec
+            perror("échec de connexion après 5 tentatives");                                     // envoyer message
+            close(sock);                                                                         // fermer la socket
+            exit(EXIT_FAILURE);                                                                  // renvoyer échec 
         }
 
-        // Envoyer notre ID
-        if (send(sock, &DSM_NODE_ID, sizeof(DSM_NODE_ID), 0) < 0) {
-            perror("send DSM_NODE_ID");
-            close(sock);
-            return -1;
+        if (send(sock, &DSM_NODE_ID, sizeof(DSM_NODE_ID), 0) < 0) {                              // envoyer le DSM_NODE_ID du processus local
+            perror("send DSM_NODE_ID");                                                          // si échec, envoyer message
+            close(sock);                                                                         // fermer la socket
+            exit(EXIT_FAILURE);                                                                  // renvoyer échec 
         }
 
-        sockets[i] = sock;
-        printf("[%d] Connected to process %d\n", DSM_NODE_ID, i);
-        fflush(stdout);
+        sockets[i] = sock;                                                                       // stocker le descripteur de fichier de la socket correspondante
     }
 
-    printf("[%d] Communication setup completed\n", DSM_NODE_ID);
-    fflush(stdout);
+    printf("[%d] Fin de dsm_comm_daemon\n", DSM_NODE_ID);                                        // message de fin
 
     return 0;
 }
-static void dsm_handler( void )
-{  
+
+
+static void dsm_handler( void ) {  
    /* 
    struct dsm_req_t req;                                                             // allouer la mémoire pour recevoir la structure de communication
 
@@ -378,19 +318,8 @@ char *dsm_init(int argc, char *argv[]) {
     }
 
     int DSMEXEC_FD = atoi(DSMEXEC_FD_ptr);                                                        // convertir la chaîne de caractère en entier
-    MASTER_FD = atoi(MASTER_FD_ptr);                                                          // convertir la chaîne de caractère en entier
+    MASTER_FD = atoi(MASTER_FD_ptr);                                                              // convertir la chaîne de caractère en entier
 
-    
-
-    // Vérifier que MASTER_FD est valide
-    struct sockaddr_in addr;
-    socklen_t len = sizeof(addr);
-    if (getsockname(MASTER_FD, (struct sockaddr*)&addr, &len) == -1) {
-        fprintf(stderr, "[%d] MASTER_FD %d is not a valid socket\n", DSM_NODE_ID, MASTER_FD);
-    } else {
-        printf("[%d] MASTER_FD %d is bound to port %d\n", 
-               DSM_NODE_ID, MASTER_FD, ntohs(addr.sin_port));
-    }
     /* reception du nombre de processus dsm envoye */
     /* par le lanceur de programmes (DSM_NODE_NUM) */
 
@@ -415,204 +344,184 @@ char *dsm_init(int argc, char *argv[]) {
     /* processus envoyees par le lanceur :                */
     /* nom de machine, numero de port, etc.               */
 
-    /* Allocation de la structure des processus */
-    procs = malloc(DSM_NODE_NUM * sizeof(dsm_proc_conn_t));
-    if (!procs) {
-        perror("malloc procs_conn");
-        exit(1);
+    procs = malloc(DSM_NODE_NUM * sizeof(dsm_proc_conn_t));                                       // allouer la structure d'information de connexion
+    if (!procs) {                                                                                 // si échec
+        perror("malloc procs_conn");                                                              // envoyer message
+        exit(EXIT_FAILURE);                                                                       // renvoyer échec
     }
-    memset(procs, 0, DSM_NODE_NUM * sizeof(dsm_proc_conn_t));
+    memset(procs, 0, DSM_NODE_NUM * sizeof(dsm_proc_conn_t));                                     // mettre les bits de mémoire à 0
 
-    /* Lecture des informations de connexion pour chaque processus */
-    for (int i = 0; i < DSM_NODE_NUM; i++) {
-        dsm_proc_conn_t temp;
-        size_t total_read = 0;
+    for (int i = 0; i < DSM_NODE_NUM; i++) {                                                      // pour l'ensemble des processus
+        dsm_proc_conn_t temp;                                                                     // allouer structure de stockage temporaire
+        size_t total_read = 0;                                                                    // initialiser compteur de lecture
         
-        while (total_read < sizeof(dsm_proc_conn_t)) {
-            ssize_t ret = read(DSMEXEC_FD, 
+        while (total_read < sizeof(dsm_proc_conn_t)) {                                            // tant qu'on a pas récupéré toute la structure
+            ssize_t ret = read(DSMEXEC_FD,                                                        // lire dans la socket
                       ((char*)&temp) + total_read, 
                       sizeof(dsm_proc_conn_t) - total_read);
-            if (ret <= 0) {
-                printf("[dsminit] erreur lecture info processus %d\n", i);
-                fflush(stdout);
-                exit(1);
+            if (ret <= 0) {                                                                       // si échec
+                printf("[dsminit] erreur lecture info processus %d\n", i);                        // envoyer message
+                exit(EXIT_FAILURE);                                                               // renvoyer échec
             }
-            total_read += ret;
+            total_read += ret;                                                                    // incrémenter compteur de lecture
         }
         
-        memcpy(&procs[i], &temp, sizeof(dsm_proc_conn_t));
+        memcpy(&procs[i], &temp, sizeof(dsm_proc_conn_t));                                        // copier dans la structure définitive
         printf("[%d] Reçu info processus %d: rank=%d, machine=%s, port=%d \n", DSM_NODE_ID, i, procs[i].rank, procs[i].machine, procs[i].port_num);
     }
 
-    
-    /* Mise en place des communications */
-    printf("[%d] Début dsm_com_daemon \n", DSM_NODE_ID);
-    fflush(stdout);
 
-    printf("[%d] Initialisation des communications \n", DSM_NODE_ID);
-    fflush(stdout);
-    
-
-    
-
-
-    if (dsm_comm_daemon() != 0) {
-        printf("[%d] Erreur initialisation communications\n", DSM_NODE_ID);
-        fflush(stdout);
-        exit(1);
+    if (dsm_comm_daemon() != 0) {                                                                 // mise en place des communications par dsm_comm_daemon
+        printf("[%d] Erreur initialisation communications\n", DSM_NODE_ID);                       // si échec, envoyer message
+        exit(EXIT_FAILURE);                                                                       // renvoyer échec
     }
 
-    sleep(2); // Attendre que tous les processus soient prêts
+    sleep(2);                                                                                     // attendre que tous les processus soient prêts
 
-    /* Test des communications */
-    struct test_msg msg = {
-        .type = 1,
-        .sender_id = DSM_NODE_ID,
-        .data = 42
+
+    struct test_msg msg = {                                                                       // structure de test pour les messages
+        .type = 1,                                                                                // type arbitraire
+        .sender_id = DSM_NODE_ID,                                                                 // DSM_NODE_ID du processus
+        .data = 42                                                                                // donnée fixée
     };
 
-    printf("[%d] Début des tests de communication\n", DSM_NODE_ID);
-    fflush(stdout);
+    printf("[%d] Début des tests de communication\n", DSM_NODE_ID);                               // message de début
 
-    // Envoi des messages de test à tous les autres processus
-    for(int i = 0; i < DSM_NODE_NUM; i++) {
-        if (i != DSM_NODE_ID) {
-            printf("[%d] Envoi message test à %d\n", DSM_NODE_ID, i);
-            fflush(stdout);
-            if (dsm_send(sockets[i], &msg, sizeof(msg)) <= 0) {
-                printf("[%d] Erreur envoi message à %d\n", DSM_NODE_ID, i);
-                fflush(stdout);
-                exit(1);
+    for(int i = 0; i < DSM_NODE_NUM; i++) {                                                       // pour l'ensemble des processus
+        if (i != DSM_NODE_ID) {                                                                   // DSM_NODE_ID excepté                   
+
+            if (dsm_send(sockets[i], &msg, sizeof(msg)) <= 0) {                                   // si échec de l'envoi du message de test
+                printf("[%d] Erreur envoi message à %d\n", DSM_NODE_ID, i);                       // envoyer message
+                exit(EXIT_FAILURE);                                                               // renvoyer échec
             }
         }
     }
 
-    // Attente des messages de test
-    int messages_received = 0;
-    int expected_messages = DSM_NODE_NUM - 1;
+    int messages_received = 0;                                                                    // compteur de messages reçus
+    int expected_messages = DSM_NODE_NUM - 1;                                                     // nombre de messages attendus
 
-    printf("[%d] Attente de %d messages de test\n", DSM_NODE_ID, expected_messages);
-    fflush(stdout);
+    printf("[%d] Attente de %d messages de test\n", DSM_NODE_ID, expected_messages);              // affichage du nombre attendu
 
-    while (messages_received < expected_messages) {
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        int max_fd = -1;
+    while (messages_received < expected_messages) {                                               // tant qu'on a pas reçu tous les messages de test
+        fd_set readfds;                                                                           // tableau de stockage de descripteurs de fichier                                                       
+        FD_ZERO(&readfds);                                                                        // mettre à zéro le tableau
+        int max_fd = -1;                                                                          // descripteur de fichier maximum de socket
 
-        for(int i = 0; i < DSM_NODE_NUM; i++) {
-            if (i != DSM_NODE_ID && sockets[i] >= 0) {
-                FD_SET(sockets[i], &readfds);
-                if (sockets[i] > max_fd) max_fd = sockets[i];
+        for(int i = 0; i < DSM_NODE_NUM; i++) {                                                   // pour l'ensemble des processus
+            if (i != DSM_NODE_ID && sockets[i] >= 0) {                                            // s'il ne s'agit pas du processus local et que la socket est valide 
+                FD_SET(sockets[i], &readfds);                                                     // stocker le descripteur de fichier de la socket dans le tableau
+                if (sockets[i] > max_fd) max_fd = sockets[i];                                     // si le descripteur est supérieur au max, mettre à jour
             }
         }
 
-        struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
-        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
+        struct timeval tv = {.tv_sec = 5, .tv_usec = 0};                                          // structure d'attente de 5s
+        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);                                // une fois l'attente effectuée, renvoyer le nombre de descripteurs prêt à communiquer 
 
-        if (ready < 0) {
-            perror("select");
-            exit(1);
-        } else if (ready == 0) {
-            printf("[%d] Timeout en attente des messages\n", DSM_NODE_ID);
-            fflush(stdout);
-            exit(1);
+        if (ready < 0) {                                                                          // si échec
+            perror("select");                                                                     // envoyer message
+            exit(EXIT_FAILURE);                                                                   // afficher échec     
+        } else if (ready == 0) {                                                                  // si aucun processus n'est prêt
+            printf("[%d] Timeout en attente des messages\n", DSM_NODE_ID);                        // afficher message
+            exit(EXIT_FAILURE);                                                                   // renvoyer échec
         }
 
-        for(int i = 0; i < DSM_NODE_NUM; i++) {
-            if (i != DSM_NODE_ID && sockets[i] >= 0 && FD_ISSET(sockets[i], &readfds)) {
-                struct test_msg received_msg;
-                if (dsm_recv(sockets[i], &received_msg, sizeof(received_msg)) > 0) {
-                    printf("[%d] Reçu message de %d: type=%d, data=%d\n", 
+        for(int i = 0; i < DSM_NODE_NUM; i++) {                                                   // pour l'ensemble des processus
+            if (i != DSM_NODE_ID && sockets[i] >= 0 && FD_ISSET(sockets[i], &readfds)) {          // excepté DSM_NODE_ID et si la socket est valide
+                struct test_msg received_msg;                                                     // initialiser une structure de stockage
+                if (dsm_recv(sockets[i], &received_msg, sizeof(received_msg)) > 0) {              // recevoir la structure de test
+                    printf("[%d] Reçu message de %d: type=%d, data=%d\n",                         // afficher message de test
                            DSM_NODE_ID, received_msg.sender_id, received_msg.type, 
                            received_msg.data);
-                    fflush(stdout);
-                    messages_received++;
+                    messages_received++;                                                          // incrémenter le compteur de messages reçus
                 }
             }
         }
     }
     
-    printf("[DSM] Début allocation des pages\n");
-    fflush(stdout);
 
-    /* Allocation des pages en tourniquet */
-    for (int index = 0; index < PAGE_NUMBER; index++) {
+    for (int index = 0; index < PAGE_NUMBER; index++) {                                           //////// début de partie M. Mercier ////////
         if ((index % DSM_NODE_NUM) == DSM_NODE_ID) {
             dsm_alloc_page(index);
             dsm_change_info(index, WRITE, DSM_NODE_ID);
         } else {
             dsm_change_info(index, INVALID, index % DSM_NODE_NUM);
         }
+    }                                                                                             //////// fin de partie M. Mercier ////////
+
+
+    struct sigaction act;                                                                         // structure pour traitant de signaux
+    memset(&act, 0, sizeof(act));                                                                 // mettre les bits de mémoire à 0
+    act.sa_flags = SA_SIGINFO;                                                                    // paramétrer la structure
+    act.sa_sigaction = segv_handler;                                                              // fonction traitante
+    if (sigaction(SIGSEGV, &act, NULL) == -1) {                                                   // assigner au signal le traitant
+        perror("sigaction");                                                                      // si échec, envoyer message
+        exit(EXIT_FAILURE);                                                                       // renvoyer échec
     }
 
-    printf("[DSM] Pages allouées\n");
-    fflush(stdout);
-
-    /* Configuration du handler SIGSEGV */
-    printf("[DSM] Configuration du handler SIGSEGV\n");
-    fflush(stdout);
-
-    struct sigaction act;
-    memset(&act, 0, sizeof(act));
-    act.sa_flags = SA_SIGINFO; 
-    act.sa_sigaction = segv_handler;
-    if (sigaction(SIGSEGV, &act, NULL) == -1) {
-        printf("[DSM] Erreur configuration handler SIGSEGV\n");
-        fflush(stdout);
-        perror("sigaction");
-        exit(1);
-    }
-
-    printf("[DSM] Handler SIGSEGV configuré\n");
-    fflush(stdout);
-
-    printf("[%d] Initialisation DSM terminée\n", DSM_NODE_ID);
-    fflush(stdout);
+    printf("[%d] Initialisation DSM terminée\n", DSM_NODE_ID);                                    // message de fin
     
-    return (char *)BASE_ADDR;
+    return (char *)BASE_ADDR;                                                                     // renvoyer adresse de base
 }
 
 
-void dsm_finalize(void) {
-    printf("[DSM-%d] Début de dsm_finalize\n", DSM_NODE_ID);
-    fflush(stdout);
+void dsm_finalize(void) {                                                         // fonction pour finaliser la dsm
+
+    printf("[%d] Début de dsm_finalize\n", DSM_NODE_ID);                          // message d'entrée
     
-    // Envoyer un message de finalisation à tous les autres processus
-    struct test_msg msg = {
-        .type = DSM_FINALIZE,
-        .sender_id = DSM_NODE_ID,
-        .data = 0
+    struct test_msg msg = {                                                       // structure de finalisation
+        .type = DSM_FINALIZE,                                                     // type de fin
+        .sender_id = DSM_NODE_ID,                                                 // processus local
+        .data = 0                                                                 // aucune donnée
     };
 
-    // Envoi du message de finalisation à tous les processus
-    for(int i = 0; i < DSM_NODE_NUM; i++) {
-        if (i != DSM_NODE_ID && sockets[i] >= 0) {
-            printf("[DSM-%d] Envoi message de finalisation à %d\n", DSM_NODE_ID, i);
-            fflush(stdout);
-            dsm_send(sockets[i], &msg, sizeof(msg));
+    for(int i = 0; i < DSM_NODE_NUM; i++) {                                       // pour l'ensemble des processus
+        if (i != DSM_NODE_ID && sockets[i] >= 0) {                                // excepté le processus local et si la socket est valide
+            printf("[%d] Envoi message de finalisation à %d\n", DSM_NODE_ID, i);  // afficher message
+            dsm_send(sockets[i], &msg, sizeof(msg));                              // envoyer message de finalisation
         }
     }
 
-    // Fermeture propre des sockets
-    if (sockets) {
-        for(int i = 0; i < DSM_NODE_NUM; i++) {
-            if (sockets[i] >= 0) {
-                printf("[DSM-%d] Fermeture socket %d\n", DSM_NODE_ID, i);
-                fflush(stdout);
-                shutdown(sockets[i], SHUT_RDWR);  // Arrêt propre de la socket
-                close(sockets[i]);
-            }
+    if (sockets) {                                                                // si le tableau des socket est non-vide 
+        for(int i = 0; i < DSM_NODE_NUM; i++) {                                   // pour l'ensemble des processus
+            if (sockets[i] >= 0) {                                                // si la socket est valide
+                printf("[%d] Fermeture socket %d\n", DSM_NODE_ID, i);             // afficher message
+                shutdown(sockets[i], SHUT_RDWR);                                  // arrêt propre de la socket
+                close(sockets[i]);                                                // fermer le descripteur de fichier de la socket
+            }                  
         }
-        free(sockets);
-        sockets = NULL;
+        free(sockets);                                                            // libérer le tableau
+        sockets = NULL;                                                           // remettre le pointeur à NULL
     }
 
-    // Libération des autres ressources
-    if (procs) {
-        free(procs);
-        procs = NULL;
+    if (procs) {                                                                  // si les structures d'information des processus sont non-vides
+        free(procs);                                                              // les libérer
+        procs = NULL;                                                             // mettre le pointeur à NULL
     }
 
-    printf("[DSM-%d] Fin de dsm_finalize\n", DSM_NODE_ID);
-    fflush(stdout);
+    
+    char *FINALIZE_COUNTER_ptr = getenv("FINALIZE_COUNTER");
+    if (FINALIZE_COUNTER_ptr == NULL) {
+        fprintf(stderr, "Erreur : FINALIZE_COUNTER non défini\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Convertir la valeur en entier
+    int FINALIZE_COUNTER = atoi(FINALIZE_COUNTER_ptr);
+
+    // Incrémenter la valeur
+    FINALIZE_COUNTER++;
+
+    // Convertir la nouvelle valeur en chaîne
+    char new_value[20];
+    snprintf(new_value, sizeof(new_value), "%d", FINALIZE_COUNTER);
+
+    // Mettre à jour FINALIZE_COUNTER dans l'environnement
+    if (setenv("FINALIZE_COUNTER", new_value, 1) == -1) {
+        perror("setenv");
+        exit(EXIT_FAILURE);
+    }
+
+
+
+    printf("[%d] Fin de dsm_finalize\n", DSM_NODE_ID);                            // message de sortie
 }
