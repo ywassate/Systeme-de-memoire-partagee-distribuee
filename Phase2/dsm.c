@@ -134,164 +134,167 @@ static int dsm_recv(int from,void *buf,size_t size)  {                          
    return 0;                                                                           // renvoyer succès
 }
 
+/* Function to check if a socket is already bound */
+int is_socket_bound(int sockfd) {
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    
+    // Try to get the socket name
+    int ret = getsockname(sockfd, (struct sockaddr*)&addr, &len);
+    
+    if (ret == 0) {
+        // Socket is bound, let's print some info
+        printf("Socket is bound to port %d\n", ntohs(addr.sin_port));
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &(addr.sin_addr), ip, INET_ADDRSTRLEN);
+        printf("Bound to address: %s\n", ip);
+        return 1;
+    } else {
+        if (errno == EINVAL) {
+            // Socket is not bound
+            printf("Socket is not bound\n");
+            return 0;
+        } else {
+            // Some other error occurred
+            printf("Error checking socket: %s\n", strerror(errno));
+            return -1;
+        }
+    }
+}
 
 static int dsm_comm_daemon(void) {
-
-    printf("[%d] Configuration des communications\n", DSM_NODE_ID);                   // message de début
+    printf("[%d] Starting communication setup\n", DSM_NODE_ID);
     fflush(stdout);
 
-    int listen_sock = socket(AF_INET, SOCK_STREAM, 0);                                // socket d'écoute
-    if (listen_sock < 0) {
-        perror("socket");
-        return -1;
-    }
-
-    
-    struct hostent *host_info;
-    if ((host_info = gethostbyname(procs[DSM_NODE_ID].machine)) == NULL) {            // obtenir l'adresse IP de la machine locale
-        perror("gethostbyname");
-        close(listen_sock);
-        return -1;
-    }
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    memcpy(&addr.sin_addr.s_addr, host_info->h_addr, host_info->h_length);
-
-    int opt = 1;
-    if (setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {   // configuration de la socket d'écoute
-        perror("setsockopt");
-        close(listen_sock);
-        return -1;
-    }
-
-    addr.sin_port = 0;
-    if (bind(listen_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {              // bind de la socket d'écoute
-        perror("bind");
-        close(listen_sock);
-        return -1;
-    }
-
-    socklen_t len = sizeof(addr);
-    if (getsockname(listen_sock, (struct sockaddr *)&addr, &len) < 0) {               // récupérer le port attribué
-        perror("getsockname");
-        close(listen_sock);
-        return -1;
-    }
-
-    int my_port = ntohs(addr.sin_port);
-    printf("[%d] Bind réussi sur port %d\n", DSM_NODE_ID, my_port);
-    fflush(stdout);
-
-    if (listen(listen_sock, 10) < 0) {                                                // mise en écoute de la socket
-        perror("listen");
-        close(listen_sock);
-        return -1;
-    }
-
-    printf("[%d] Socket en écoute\n", DSM_NODE_ID);
-    fflush(stdout);
-
-    sockets = malloc(DSM_NODE_NUM * sizeof(int));                                     // allocation du tableau des sockets 
+    // Allocation du tableau de sockets
+    sockets = malloc(DSM_NODE_NUM * sizeof(int));
     if (!sockets) {
         perror("malloc sockets");
-        close(listen_sock);
         return -1;
     }
     memset(sockets, -1, DSM_NODE_NUM * sizeof(int));
 
-    sleep(2);                      
-
-    if (DSM_NODE_ID == 0) {  // Processus 0 attend les connexions des autres processus
-    for (int i = 1; i < DSM_NODE_NUM; i++) {
-        printf("[%d] Attente connexion de %d\n", DSM_NODE_ID, i);
-        fflush(stdout);
-
-        struct sockaddr_in client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        sockets[i] = accept(listen_sock, (struct sockaddr *)&client_addr, &client_len);
-        if (sockets[i] < 0) {
-            perror("accept");
-            close(listen_sock);
+    if (DSM_NODE_ID == 0) {
+        // Pour le processus 0, on vérifie si le socket est déjà en écoute
+        int opt = 1;
+        if (setsockopt(MASTER_FD, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+            perror("setsockopt");
             return -1;
-            }
+        }
 
-        printf("[%d] Accepté connexion de %d\n", DSM_NODE_ID, i);
+        // Obtenir les informations actuelles du socket
+        struct sockaddr_in addr;
+        socklen_t len = sizeof(addr);
+        if (getsockname(MASTER_FD, (struct sockaddr*)&addr, &len) == 0) {
+            printf("[%d] MASTER_FD is bound to port %d\n", DSM_NODE_ID, ntohs(addr.sin_port));
+        } else {
+            perror("getsockname");
+            return -1;
+        }
+
+        // Mettre le socket en mode écoute
+        if (listen(MASTER_FD, DSM_NODE_NUM - 1) < 0) {
+            perror("listen");
+            return -1;
+        }
+
+        printf("[%d] Listening for incoming connections\n", DSM_NODE_ID);
         fflush(stdout);
-        }
 
-    } else {  // Tous les autres processus
-        for (int i = 0; i < DSM_NODE_NUM; i++) {
-            if (i == DSM_NODE_ID) {
-                // Attendre les connexions des processus avec des IDs plus élevés
-                for (int j = i + 1; j < DSM_NODE_NUM; j++) {
-                    printf("[%d] Attente connexion de %d\n", DSM_NODE_ID, j);
-                    fflush(stdout);
+        // Le processus 0 attend les connexions des autres processus
+        for (int i = 1; i < DSM_NODE_NUM; i++) {
+            printf("[%d] Waiting for connection from process %d\n", DSM_NODE_ID, i);
+            fflush(stdout);
 
-                    struct sockaddr_in client_addr;
-                    socklen_t client_len = sizeof(client_addr);
-                    sockets[j] = accept(listen_sock, (struct sockaddr *)&client_addr, &client_len);
-                    if (sockets[j] < 0) {
-                        perror("accept");
-                        close(listen_sock);
-                        return -1;
-                    }
-
-                    printf("[%d] Accepté connexion de %d\n", DSM_NODE_ID, j);
-                    fflush(stdout);
-                }
-            } else if (i < DSM_NODE_ID) {
-                // Se connecter aux processus avec des IDs plus petits
-                printf("[%d] Tentative de connexion à %d\n", DSM_NODE_ID, i);
-                fflush(stdout);
-
-                sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
-                if (sockets[i] < 0) {
-                    perror("socket");
-                    close(listen_sock);
-                    return -1;
-                }
-
-                struct sockaddr_in peer_addr = {0};
-                peer_addr.sin_family = AF_INET;
-                peer_addr.sin_port = htons(procs[i].port_num);
-
-                struct hostent *peer_host = gethostbyname(procs[i].machine);
-                if (peer_host == NULL) {
-                    perror("gethostbyname");
-                    close(listen_sock);
-                    return -1;
-                }
-                memcpy(&peer_addr.sin_addr.s_addr, peer_host->h_addr, peer_host->h_length);
-
-                // Tentatives de connexion avec retry
-                int connected = 0;
-                for (int retry = 0; retry < 5 && !connected; retry++) {
-                    if (connect(sockets[i], (struct sockaddr *)&peer_addr, sizeof(peer_addr)) == 0) {
-                        connected = 1;
-                        printf("[%d] Connecté à %d\n", DSM_NODE_ID, i);
-                        fflush(stdout);
-                    } else {
-                        sleep(1);
-                    }
-                }
-
-                if (!connected) {
-                    perror("connect failed after retries");
-                    close(listen_sock);
-                    return -1;
-                }
+            struct sockaddr_in client_addr;
+            socklen_t client_len = sizeof(client_addr);
+            int client_fd = accept(MASTER_FD, (struct sockaddr*)&client_addr, &client_len);
+            
+            if (client_fd < 0) {
+                perror("accept");
+                return -1;
             }
+
+            // Recevoir l'ID du processus qui se connecte
+            int remote_id;
+            if (recv(client_fd, &remote_id, sizeof(remote_id), MSG_WAITALL) <= 0) {
+                perror("recv remote_id");
+                close(client_fd);
+                return -1;
+            }
+
+            if (remote_id <= 0 || remote_id >= DSM_NODE_NUM) {
+                fprintf(stderr, "[%d] Invalid remote_id received: %d\n", DSM_NODE_ID, remote_id);
+                close(client_fd);
+                return -1;
+            }
+
+            sockets[remote_id] = client_fd;
+            printf("[%d] Accepted connection from process %d\n", DSM_NODE_ID, remote_id);
+            fflush(stdout);
         }
+    } else {
+        // Les autres processus se connectent au processus 0
+        printf("[%d] Connecting to process 0\n", DSM_NODE_ID);
+        fflush(stdout);
+
+        int sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock < 0) {
+            perror("socket");
+            return -1;
+        }
+
+        struct sockaddr_in server_addr;
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(procs[0].port_num);
+
+        // Résolution du nom d'hôte
+        struct hostent *he = gethostbyname(procs[0].machine);
+        if (!he) {
+            perror("gethostbyname");
+            close(sock);
+            return -1;
+        }
+        memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);
+
+        // Tentative de connexion avec retry
+        int connected = 0;
+        for (int retry = 0; retry < 5 && !connected; retry++) {
+            if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0) {
+                connected = 1;
+                break;
+            }
+            printf("[%d] Connection attempt %d failed, retrying...\n", DSM_NODE_ID, retry + 1);
+            sleep(1);
+        }
+
+        if (!connected) {
+            perror("connect failed after retries");
+            close(sock);
+            return -1;
+        }
+
+        // Envoyer notre ID au processus 0
+        if (send(sock, &DSM_NODE_ID, sizeof(DSM_NODE_ID), 0) < 0) {
+            perror("send DSM_NODE_ID");
+            close(sock);
+            return -1;
+        }
+
+        sockets[0] = sock;
+        printf("[%d] Successfully connected to process 0\n", DSM_NODE_ID);
+        fflush(stdout);
     }
 
-    close(listen_sock);
-    printf("[%d] Toutes les connexions établies\n", DSM_NODE_ID);
+    // Stocker notre propre socket
+    sockets[DSM_NODE_ID] = MASTER_FD;
+
+    printf("[%d] Communication setup completed\n", DSM_NODE_ID);
     fflush(stdout);
+
     return 0;
 }
-
 
 static void dsm_handler( void )
 {  
@@ -383,8 +386,19 @@ char *dsm_init(int argc, char *argv[]) {
     }
 
     int DSMEXEC_FD = atoi(DSMEXEC_FD_ptr);                                                        // convertir la chaîne de caractère en entier
-    int MASTER_FD = atoi(MASTER_FD_ptr);                                                          // convertir la chaîne de caractère en entier
+    MASTER_FD = atoi(MASTER_FD_ptr);                                                          // convertir la chaîne de caractère en entier
+
     
+
+    // Vérifier que MASTER_FD est valide
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    if (getsockname(MASTER_FD, (struct sockaddr*)&addr, &len) == -1) {
+        fprintf(stderr, "[%d] MASTER_FD %d is not a valid socket\n", DSM_NODE_ID, MASTER_FD);
+    } else {
+        printf("[%d] MASTER_FD %d is bound to port %d\n", 
+               DSM_NODE_ID, MASTER_FD, ntohs(addr.sin_port));
+    }
     /* reception du nombre de processus dsm envoye */
     /* par le lanceur de programmes (DSM_NODE_NUM) */
 
@@ -447,63 +461,8 @@ char *dsm_init(int argc, char *argv[]) {
     fflush(stdout);
     
 
-    /* Configuration de la socket MASTER_FD */
-    struct addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;  // IPv4 uniquement
-    hints.ai_socktype = SOCK_STREAM;
+    
 
-    /* Résolution de l'adresse de la machine locale */
-    if (getaddrinfo(procs[DSM_NODE_ID].machine, NULL, &hints, &res) != 0) {
-        fprintf(stderr, "[%d] Erreur lors de la résolution de l'hôte : %s\n", DSM_NODE_ID, procs[DSM_NODE_ID].machine);
-        exit(1);
-    }
-
-    printf("[%d] Résolution de l'adresse réussie pour %s\n", DSM_NODE_ID, procs[DSM_NODE_ID].machine);
-    fflush(stdout);
-
-    struct sockaddr_in addr = {0};
-    addr.sin_family = AF_INET;
-    memcpy(&addr.sin_addr, &((struct sockaddr_in *)res->ai_addr)->sin_addr, sizeof(struct in_addr));
-    addr.sin_port = 0;  // Laisser le système assigner un port dynamique
-    freeaddrinfo(res);
-
-    /* Configuration de l'option SO_REUSEADDR */
-    int opt = 1;
-    if (setsockopt(MASTER_FD, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt");
-        exit(1);
-    }
-    printf("[%d] Option SO_REUSEADDR configurée pour MASTER_FD\n", DSM_NODE_ID);
-    fflush(stdout);
-
-    /* Association de la socket au port */
-    if (bind(MASTER_FD, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind");
-        exit(1);
-    }
-    printf("[%d] MASTER_FD bind réussi\n", DSM_NODE_ID);
-    fflush(stdout);
-
-    /* Récupération du port attribué dynamiquement */
-    socklen_t addr_len = sizeof(addr);
-    if (getsockname(MASTER_FD, (struct sockaddr *)&addr, &addr_len) < 0) {
-        perror("getsockname");
-        exit(1);
-    }
-
-    int my_port = ntohs(addr.sin_port);
-    procs[DSM_NODE_ID].port_num = my_port;  // Mise à jour dans la structure de processus
-    printf("[%d] Port dynamique attribué : %d\n", DSM_NODE_ID, my_port);
-    fflush(stdout);
-
-    /* Passage en mode écoute */
-    if (listen(MASTER_FD, SOMAXCONN) < 0) {
-        perror("listen");
-        exit(1);
-    }
-    printf("[%d] Socket MASTER_FD en écoute sur le port %d\n", DSM_NODE_ID, my_port);
-    fflush(stdout);
 
     if (dsm_comm_daemon() != 0) {
         printf("[%d] Erreur initialisation communications\n", DSM_NODE_ID);
