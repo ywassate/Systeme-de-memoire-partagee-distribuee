@@ -173,69 +173,65 @@ static int dsm_comm_daemon(void) {
         return -1;
     }
     memset(sockets, -1, DSM_NODE_NUM * sizeof(int));
+    
+    // Stocker notre MASTER_FD
+    sockets[DSM_NODE_ID] = MASTER_FD;
 
-    if (DSM_NODE_ID == 0) {
-        // Pour le processus 0, on vérifie si le socket est déjà en écoute
-        int opt = 1;
-        if (setsockopt(MASTER_FD, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-            perror("setsockopt");
-            return -1;
-        }
+    // Configuration du socket pour écoute
+    int opt = 1;
+    if (setsockopt(MASTER_FD, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+        perror("setsockopt");
+        return -1;
+    }
 
-        // Obtenir les informations actuelles du socket
-        struct sockaddr_in addr;
-        socklen_t len = sizeof(addr);
-        if (getsockname(MASTER_FD, (struct sockaddr*)&addr, &len) == 0) {
-            printf("[%d] MASTER_FD is bound to port %d\n", DSM_NODE_ID, ntohs(addr.sin_port));
-        } else {
-            perror("getsockname");
-            return -1;
-        }
+    // Vérifier si le socket est bien lié
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    if (getsockname(MASTER_FD, (struct sockaddr*)&addr, &len) == 0) {
+        printf("[%d] MASTER_FD is bound to port %d\n", DSM_NODE_ID, ntohs(addr.sin_port));
+    } else {
+        perror("getsockname");
+        return -1;
+    }
 
-        // Mettre le socket en mode écoute
-        if (listen(MASTER_FD, DSM_NODE_NUM - 1) < 0) {
-            perror("listen");
-            return -1;
-        }
+    // Passer en mode écoute
+    if (listen(MASTER_FD, DSM_NODE_NUM - 1) < 0) {
+        perror("listen");
+        return -1;
+    }
 
-        printf("[%d] Listening for incoming connections\n", DSM_NODE_ID);
+    // Phase 1: Accepter les connexions des processus de rang inférieur
+    printf("[%d] Waiting for connections from lower rank processes\n", DSM_NODE_ID);
+    for (int i = DSM_NODE_ID + 1; i < DSM_NODE_NUM; i++) {
+        printf("[%d] Waiting for connection from process %d\n", DSM_NODE_ID, i);
         fflush(stdout);
 
-        // Le processus 0 attend les connexions des autres processus
-        for (int i = 1; i < DSM_NODE_NUM; i++) {
-            printf("[%d] Waiting for connection from process %d\n", DSM_NODE_ID, i);
-            fflush(stdout);
-
-            struct sockaddr_in client_addr;
-            socklen_t client_len = sizeof(client_addr);
-            int client_fd = accept(MASTER_FD, (struct sockaddr*)&client_addr, &client_len);
-            
-            if (client_fd < 0) {
-                perror("accept");
-                return -1;
-            }
-
-            // Recevoir l'ID du processus qui se connecte
-            int remote_id;
-            if (recv(client_fd, &remote_id, sizeof(remote_id), MSG_WAITALL) <= 0) {
-                perror("recv remote_id");
-                close(client_fd);
-                return -1;
-            }
-
-            if (remote_id <= 0 || remote_id >= DSM_NODE_NUM) {
-                fprintf(stderr, "[%d] Invalid remote_id received: %d\n", DSM_NODE_ID, remote_id);
-                close(client_fd);
-                return -1;
-            }
-
-            sockets[remote_id] = client_fd;
-            printf("[%d] Accepted connection from process %d\n", DSM_NODE_ID, remote_id);
-            fflush(stdout);
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        int client_fd = accept(MASTER_FD, (struct sockaddr*)&client_addr, &client_len);
+        
+        if (client_fd < 0) {
+            perror("accept");
+            return -1;
         }
-    } else {
-        // Les autres processus se connectent au processus 0
-        printf("[%d] Connecting to process 0\n", DSM_NODE_ID);
+
+        // Recevoir l'ID du processus qui se connecte
+        int remote_id;
+        if (recv(client_fd, &remote_id, sizeof(remote_id), MSG_WAITALL) <= 0) {
+            perror("recv remote_id");
+            close(client_fd);
+            return -1;
+        }
+
+        sockets[remote_id] = client_fd;
+        printf("[%d] Accepted connection from process %d\n", DSM_NODE_ID, remote_id);
+        fflush(stdout);
+    }
+
+    // Phase 2: Se connecter aux processus de rang inférieur
+    printf("[%d] Connecting to lower rank processes\n", DSM_NODE_ID);
+    for (int i = 0; i < DSM_NODE_ID; i++) {
+        printf("[%d] Connecting to process %d\n", DSM_NODE_ID, i);
         fflush(stdout);
 
         int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -247,10 +243,9 @@ static int dsm_comm_daemon(void) {
         struct sockaddr_in server_addr;
         memset(&server_addr, 0, sizeof(server_addr));
         server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(procs[0].port_num);
+        server_addr.sin_port = htons(procs[i].port_num);
 
-        // Résolution du nom d'hôte
-        struct hostent *he = gethostbyname(procs[0].machine);
+        struct hostent *he = gethostbyname(procs[i].machine);
         if (!he) {
             perror("gethostbyname");
             close(sock);
@@ -265,7 +260,8 @@ static int dsm_comm_daemon(void) {
                 connected = 1;
                 break;
             }
-            printf("[%d] Connection attempt %d failed, retrying...\n", DSM_NODE_ID, retry + 1);
+            printf("[%d] Connection attempt %d to process %d failed, retrying...\n",
+                   DSM_NODE_ID, retry + 1, i);
             sleep(1);
         }
 
@@ -275,27 +271,23 @@ static int dsm_comm_daemon(void) {
             return -1;
         }
 
-        // Envoyer notre ID au processus 0
+        // Envoyer notre ID
         if (send(sock, &DSM_NODE_ID, sizeof(DSM_NODE_ID), 0) < 0) {
             perror("send DSM_NODE_ID");
             close(sock);
             return -1;
         }
 
-        sockets[0] = sock;
-        printf("[%d] Successfully connected to process 0\n", DSM_NODE_ID);
+        sockets[i] = sock;
+        printf("[%d] Connected to process %d\n", DSM_NODE_ID, i);
         fflush(stdout);
     }
-
-    // Stocker notre propre socket
-    sockets[DSM_NODE_ID] = MASTER_FD;
 
     printf("[%d] Communication setup completed\n", DSM_NODE_ID);
     fflush(stdout);
 
     return 0;
 }
-
 static void dsm_handler( void )
 {  
    /* 
