@@ -1,0 +1,9 @@
+dsm.c:102:13: warning: ‘dsm_free_page’ defined but not used [-Wunused-function]
+  102 | static void dsm_free_page( int numpage )
+      |             ^~~~~~~~~~~~~
+dsm.c:81:25: warning: ‘get_status’ defined but not used [-Wunused-function]
+   81 | static dsm_page_state_t get_status( int numpage)
+      |                         ^~~~~~~~~~
+dsm.c:55:14: warning: ‘address2pgaddr’ defined but not used [-Wunused-function]
+   55 | static char *address2pgaddr( char *addr )
+      |              ^~~~~~~~~~~~~~
