@@ -2,7 +2,8 @@
 requin
 impala
 lama
-okapi 
+okapi
+ 
 =====================================
  
  
@@ -24,10 +25,7 @@ Number of args : 1
  
 ======================= DSMEXEC TEST :
 ============================ Essai #1
-timeout: the monitored command dumped core
 ============================ Essai #2
-timeout: the monitored command dumped core
 =====================================
 ======================= DATA EXCHANGE TEST :
-timeout: the monitored command dumped core
 =====================================
