@@ -24,7 +24,6 @@ void sigchld_handler(int sig) {                                                 
     int status;                                                                                  // statut de la sortie
     pid_t pid;                                                                                   // pid du processus à attendre
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {                                          // attendre la fin des processus zombie
-        printf("[sigchld_handler] Processus %d terminé, status %d\n", pid, WEXITSTATUS(status)); // print message de confirmation
     }
 }
 
@@ -69,7 +68,6 @@ int creer_socket(int type, const char *ip, int port) {  // création de socket d
         }
     }
     
-    printf("[creer_socket] Socket créée avec descripteur de fichier : %d\n", sock);
     
     return sock;                                        // retourne descripteur socket configuré
 }
@@ -124,10 +122,6 @@ char **read_machine_file(char *argv) {                   // fonction pour lire l
    }
    sprintf(tab[0], "%d\n", index_tab-1);                 // rajouter le nombre de lignes lues au début du tableau
 
-   for (int i = 1; i < index_tab; i++) {                 // afficher le contenu du tableau
-      printf("[read_machine_file] ligne %i lue dans machine_file %s\n", i, tab[i]); 
-   }
-
    close(fd);                                            // fermer le processus
 
    return tab;                                           // renvoyer le tableau
@@ -163,5 +157,4 @@ char* get_local_ip() {                                                          
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////  Fin de Partie Modifiée  //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 
