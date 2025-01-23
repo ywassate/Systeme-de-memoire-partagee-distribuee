@@ -1,0 +1,91 @@
+======================= MACHINE FILE :
+requin
+impala
+lama
+okapi
+ 
+=====================================
+ 
+ 
+======================= COMMANDS USED :
+/net/npers/mercier/PR204/Suivi_Thor/2024-2025/Repos/pr204-24473/Phase1/bin/dsmexec
+/net/npers/mercier/PR204/Suivi_Thor/2024-2025/Repos/pr204-24473/Phase1/bin/dsmwrap
+/net/npers/mercier/PR204/Suivi_Thor/2024-2025/Repos/pr204-24473/Phase1/bin/truc
+=====================================
+ 
+ 
+======================= REGULAR TEST :
+arg[0] : truc
+open: No such file or directory
+Working dir is /net/npers/mercier/PR204/Suivi_Thor/2024-2025/Repos/pr204-24473/Phase1
+Number of args : 1
+================ Valeur du descripteur : -1
+ 
+=====================================
+ 
+======================= DSMEXEC TEST :
+============================ Essai #1
+[Proc 0 : requin : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 0 : requin : stderr] arg[0] : 
+[Proc 1 : impala : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 1 : impala : stderr] arg[0] : 
+[Proc 2 : lama : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 2 : lama : stderr] arg[0] : 
+[Proc 3 : okapi : stderr] arg[0] : 
+[Proc 3 : okapi : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+============================ Essai #2
+[Proc 0 : requin : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 0 : requin : stderr] arg[0] : 
+[Proc 1 : impala : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 1 : impala : stderr] arg[0] : 
+[Proc 2 : lama : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+[Proc 2 : lama : stderr] arg[0] : 
+[Proc 3 : okapi : stderr] arg[0] : 
+[Proc 3 : okapi : stdout] Working dir is /net/npers/mercier
+Number of args : 1
+================ Valeur du descripteur : 5
+=====================================
+======================= DATA EXCHANGE TEST :
+[Proc 0 : requin : stdout] MASTER_FD is 4 | DSMEXEC_FD is 3
+Info from dsmexec : I'm process 0 / 4 processes total
+[0] got connection info from dsmexec 
+[0] Process 0 is on machine: requin (port #: 35165)
+[0] Process 1 is on machine:  (port #: 0)
+[0] Process 2 is on machine:  (port #: 0)
+[0] Process 3 is on machine:  (port #: 0)
+[Proc 1 : impala : stdout] MASTER_FD is 4 | DSMEXEC_FD is 3
+Info from dsmexec : I'm process 2 / 4 processes total
+[2] got connection info from dsmexec 
+[2] Process 0 is on machine: requin (port #: 35165)
+[2] Process 1 is on machine: okapi (port #: 44429)
+[2] Process 2 is on machine: impala (port #: 36339)
+[2] Process 3 is on machine:  (port #: 0)
+[Proc 3 : okapi : stdout] MASTER_FD is 4 | DSMEXEC_FD is 3
+Info from dsmexec : I'm process 1 / 4 processes total
+[1] got connection info from dsmexec 
+[1] Process 0 is on machine: requin (port #: 35165)
+[1] Process 1 is on machine: okapi (port #: 44429)
+[1] Process 2 is on machine:  (port #: 0)
+[1] Process 3 is on machine:  (port #: 0)
+[Proc 2 : lama : stdout] MASTER_FD is 4 | DSMEXEC_FD is 3
+Info from dsmexec : I'm process 3 / 4 processes total
+[3] got connection info from dsmexec 
+[3] Process 0 is on machine: requin (port #: 35165)
+[3] Process 1 is on machine: okapi (port #: 44429)
+[3] Process 2 is on machine: impala (port #: 36339)
+[3] Process 3 is on machine: lama (port #: 34031)
+=====================================
