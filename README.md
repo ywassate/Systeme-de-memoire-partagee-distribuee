@@ -42,5 +42,33 @@ Le système DSM repose sur les hypothèses suivantes :
   - Propriétaire de la page
   - État de la page
 
-#### Exemple de répartition (Figure 1)
+### 🚀 Phase 1 : Lancement des processus (dsmexec)
+
+La première phase du projet consiste à développer un programme appelé `dsmexec`, qui permet de **lancer les différents processus DSM à distance** sur un ensemble de machines spécifiées.
+
+Ce programme a plusieurs responsabilités :
+- Lire un fichier de configuration listant les machines cibles ;
+- Lancer un processus sur chaque machine via SSH ;
+- Attribuer un rang (ID) à chaque processus ;
+- Transmettre les informations nécessaires via des sockets ;
+- Centraliser les sorties standard (`stdout`) et erreur (`stderr`) pour les afficher de façon lisible.
+
+Un programme intermédiaire, `dsmwrap`, est utilisé pour faciliter l’exécution à distance et nettoyer la ligne de commande avant de lancer le programme DSM final.
+
+---
+
+### ⚙️ Phase 2 : Mise en place de la DSM
+
+La deuxième phase vise à implémenter la **bibliothèque logicielle de DSM** qui gère :
+
+- L’allocation des pages mémoire selon une stratégie **cyclique** ;
+- La détection des accès mémoire invalides via un gestionnaire de signal (`SIGSEGV`) ;
+- L’envoi et la réception de pages entre processus ;
+- La **synchronisation et la cohérence** des informations de page (propriétaire, état) entre les processus.
+
+La communication entre processus est assurée par des **sockets UNIX** (TCP ou UDP). Pour permettre aux processus de continuer leur exécution tout en répondant aux demandes des autres, **le système est multithreadé**.
+
+---
+
+Ce projet est une introduction aux concepts de mémoire distribuée, de synchronisation, de signalisation bas-niveau, et de communication réseau entre processus répartis sur plusieurs hôtes.
 
